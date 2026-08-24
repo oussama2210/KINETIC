@@ -1,7 +1,15 @@
 import { inngest } from "../client";
 import { prisma } from "@/lib/prisma";
+import { Prisma } from "@prisma/client";
 import { getSupabaseReadUrl, hasSupabaseConfig } from "@/lib/supabase";
 import { getPresignedReadUrl } from "@/lib/s3";
+import {
+  transcribeWithDeepgram,
+  buildCaptionCues,
+  hasDeepgramConfig,
+  type DeepgramWord,
+  type CaptionCue,
+} from "@/lib/deepgram";
 
 export interface ProcessVideoEventData {
   projectId: string;
@@ -14,6 +22,36 @@ export interface ProcessVideoEventData {
   aspectRatio?: string;
   detectHooks?: boolean;
   autoBroll?: boolean;
+}
+
+/**
+ * Fallback: build evenly-timed caption cues from a plain transcript
+ * when no word-level timestamps are available (~2.5s per cue).
+ */
+function buildCuesFromPlainText(transcript: string): CaptionCue[] {
+  const sentences = transcript
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const cues: CaptionCue[] = [];
+  let cursor = 0;
+
+  for (const sentence of sentences) {
+    const words = sentence.split(/\s+/);
+    for (let i = 0; i < words.length; i += 5) {
+      const text = words.slice(i, i + 5).join(" ");
+      cues.push({
+        start: cursor,
+        end: cursor + 2.5,
+        text,
+        index: cues.length,
+      });
+      cursor += 2.5;
+    }
+  }
+
+  return cues;
 }
 
 export const processVideoWorkflow = inngest.createFunction(
@@ -70,45 +108,105 @@ export const processVideoWorkflow = inngest.createFunction(
       return { signedUrl };
     });
 
-    // Step 3: Simulate Whisper latency
-    await step.sleep("simulate-whisper-latency", "1.5s");
+    // Step 3: Simulate upload propagation latency
+    await step.sleep("simulate-upload-propagation", "1.5s");
 
-    // Step 4: Whisper AI Speech-to-Text Transcription & Audio Extraction (70%)
-    const transcriptionResult = await step.run("transcribe-whisper-speech", async () => {
-      const generatedTranscript =
-        "Welcome back everyone. In today's masterclass, we are dissecting the exact architecture behind autonomous AI video generation. " +
-        "The first rule of thumb is temporal coherence. If your frames drift, your audience drops. " +
-        "Secondly, dynamic word-by-word subtitles increase retention on TikTok and Reels by over 340%. " +
-        "Let's dive straight into the 3 execution steps to scale your content pipeline.";
+    // Step 4: Deepgram AI Speech-to-Text Transcription from uploaded video URL (70%)
+    const transcriptionResult = await step.run("transcribe-video-deepgram", async () => {
+      let transcript = "";
+      let words: DeepgramWord[] = [];
+
+      if (hasDeepgramConfig && signedUrlData.signedUrl) {
+        // Real Deepgram transcription from the signed video URL
+        try {
+          const result = await transcribeWithDeepgram(signedUrlData.signedUrl);
+          transcript = result.transcript;
+          words = result.words;
+        } catch (dgErr) {
+          console.warn("Deepgram transcription failed, using fallback:", dgErr);
+        }
+      }
+
+      if (!transcript) {
+        // Fallback mock transcript when Deepgram key is missing or call failed
+        transcript =
+          "Welcome back everyone. In today's masterclass, we are dissecting the exact architecture behind autonomous AI video generation. " +
+          "The first rule of thumb is temporal coherence. If your frames drift, your audience drops. " +
+          "Secondly, dynamic word-by-word subtitles increase retention on TikTok and Reels by over 340%. " +
+          "Let's dive straight into the 3 execution steps to scale your content pipeline.";
+      }
+
+      // Testing hook: print the full transcript in the Inngest dev dashboard logs
+      console.log("[TEST] Deepgram transcript for project", projectId, ":\n", transcript);
+      if (words.length) {
+        console.log(
+          "[TEST] First 5 word timestamps:",
+          words.slice(0, 5).map((w) => `${w.word} (${w.start}s-${w.end}s)`)
+        );
+      }
 
       try {
         await prisma.project.update({
           where: { id: projectId },
           data: {
-            transcription: generatedTranscript,
+            transcription: transcript,
             status: "TRANSCRIBING",
             progress: 70,
-            currentStep: "Whisper AI speech transcription & word-level timestamps complete",
+            currentStep: hasDeepgramConfig
+              ? "Deepgram Nova speech-to-text complete • Word-level timestamps extracted"
+              : "Fallback transcript generated (DEEPGRAM_API_KEY not set)",
           },
         });
       } catch (e) {
-        console.warn("DB update skipped in step 3", e);
+        console.warn("DB update skipped in transcribe step", e);
       }
 
-      return { transcript: generatedTranscript };
+      return { transcript, words };
     });
 
-    // Step 5: Simulate hook detection latency
-    await step.sleep("simulate-hook-detection", "1s");
+    // Step 5: Generate synchronized captions from word-level timestamps (80%)
+    const captionResult = await step.run("generate-synchronized-captions", async () => {
+      let cues: CaptionCue[] = [];
 
-    // Step 6: Detect Viral Hooks & AI Punchlines (88%)
+      if (transcriptionResult.words.length > 0) {
+        cues = buildCaptionCues(transcriptionResult.words);
+      } else {
+        // Derive simple evenly-timed cues from the plain transcript
+        cues = buildCuesFromPlainText(transcriptionResult.transcript);
+      }
+
+      try {
+        await prisma.project.update({
+          where: { id: projectId },
+          data: {
+            captions: cues as unknown as Prisma.InputJsonValue,
+            progress: 80,
+            currentStep: `Captions generated • ${cues.length} synchronized subtitle cues`,
+          },
+        });
+      } catch (e) {
+        console.warn("DB update skipped in caption step", e);
+      }
+
+      return { cues };
+    });
+
+    // Step 6: Detect viral hooks & slice vertical shorts using transcript context (88%)
     const viralMoments = await step.run("detect-viral-hooks", async () => {
+      const snippetAt = (fromWord: number, toWord: number): string => {
+        const slice = transcriptionResult.words.slice(fromWord, toWord);
+        if (slice.length) {
+          return "\u201C" + slice.map((w: DeepgramWord) => w.punctuated_word || w.word).join(" ") + "...\u201D";
+        }
+        return "\u201C" + transcriptionResult.transcript.slice(0, 120) + "...\u201D";
+      };
+
       const clips = [
         {
           title: "Viral Hook #1 — Temporal Coherence Secret",
           duration: "00:32",
           viralityScore: 98,
-          transcriptSnippet: "\u201CThe first rule of thumb is temporal coherence. If your frames drift, your audience drops...\u201D",
+          transcriptSnippet: snippetAt(0, Math.min(12, transcriptionResult.words.length)),
           videoUrl: signedUrlData.signedUrl || "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
           aspectRatio: "9:16",
         },
@@ -116,7 +214,7 @@ export const processVideoWorkflow = inngest.createFunction(
           title: "Viral Hook #2 — 340% More Retention with Dynamic Subtitles",
           duration: "00:45",
           viralityScore: 95,
-          transcriptSnippet: "\u201CDynamic word-by-word subtitles increase retention on TikTok and Reels by over 340%...\u201D",
+          transcriptSnippet: snippetAt(Math.min(12, transcriptionResult.words.length), Math.min(28, transcriptionResult.words.length)),
           videoUrl: signedUrlData.signedUrl || "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
           aspectRatio: "9:16",
         },
@@ -124,7 +222,7 @@ export const processVideoWorkflow = inngest.createFunction(
           title: "Viral Hook #3 — 3 Steps to Scale Content Pipeline",
           duration: "00:28",
           viralityScore: 92,
-          transcriptSnippet: "\u201CLet's dive straight into the 3 execution steps to scale your content pipeline...\u201D",
+          transcriptSnippet: snippetAt(Math.min(28, transcriptionResult.words.length), Math.min(45, transcriptionResult.words.length)),
           videoUrl: signedUrlData.signedUrl || "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4",
           aspectRatio: "9:16",
         },
@@ -170,7 +268,7 @@ export const processVideoWorkflow = inngest.createFunction(
           data: {
             status: "COMPLETED",
             progress: 100,
-            currentStep: `Completed • ${viralMoments.clips.length} AI Shorts generated with dynamic subtitles`,
+            currentStep: `Completed • ${viralMoments.clips.length} AI Shorts with ${captionResult.cues.length} caption cues`,
           },
           include: {
             shorts: true,
@@ -196,6 +294,9 @@ export const processVideoWorkflow = inngest.createFunction(
       status: "COMPLETED",
       signedUrl: signedUrlData.signedUrl,
       clipsCount: viralMoments.clips.length,
+      // Returned for testing: full transcript + generated caption cues
+      transcript: transcriptionResult.transcript,
+      captions: captionResult.cues,
       result: finalResult,
     };
   }

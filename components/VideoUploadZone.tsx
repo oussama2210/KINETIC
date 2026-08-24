@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { 
   Upload, 
   Film, 
@@ -211,18 +212,25 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
   };
 
   // -------------------------------------------------------------
-  // TRIGGER INGGEST WORKFLOW ONLY WHEN USER CLICKS "PROCESS VIDEO"
+  // "AI ANALYSE" BUTTON:
+  // 1) Creates Project & dispatches Inngest event via /api/video/process
+  // 2) Uploads raw video file to Supabase Storage
+  // 3) Navigates to the dedicated project page which polls live workflow
+  //    progress (Deepgram transcription -> captions -> viral shorts)
   // -------------------------------------------------------------
-  const handleExecuteInggestWorkflow = async () => {
+  const router = useRouter();
+
+  const handleAiAnalyse = async () => {
     if (!uploadedVideo || isProcessingWorkflow) return;
 
     setIsProcessingWorkflow(true);
-    setWorkflowProgress(15);
+    setWorkflowProgress(10);
     setActiveStepIndex(1);
-    setCurrentStepMessage("1/4: Initializing Inggest workflow & uploading video to Supabase Storage...");
+    setGeneratedClips(null);
+    setCurrentStepMessage("Creating project & dispatching Inngest AI analysis workflow...");
 
     try {
-      // 1. Call Next.js API to create Project in Supabase DB and dispatch Inggest event
+      // 1. Create project in Supabase DB + get signed upload URL + trigger Inngest
       const res = await fetch("/api/video/process", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -247,10 +255,10 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
       setProjectId(newProjectId);
       setSignedUrl(newSignedUrl);
 
-      // UPLOAD FILE TO SUPABASE STORAGE BUCKET
+      // 2. Upload raw video file directly to Supabase Storage bucket
       if (uploadedVideo.file && uploadUrl && isLiveStorage) {
         setCurrentStepMessage("Uploading video to Supabase storage bucket...");
-        setWorkflowProgress(25);
+        setWorkflowProgress(15);
 
         try {
           const uploadHeaders: Record<string, string> = {
@@ -274,77 +282,15 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
         }
       }
 
-      // 2. Inggest Step-by-Step Progress Pipeline
-      setTimeout(() => {
-        setWorkflowProgress(40);
-        setActiveStepIndex(2);
-        setCurrentStepMessage("2/4: Supabase storage verified • Generating Pre-signed URL & saving to Supabase DB...");
-      }, 1000);
-
-      setTimeout(() => {
-        setWorkflowProgress(70);
-        setActiveStepIndex(3);
-        setCurrentStepMessage("3/4: Whisper AI extracting speech & building word-level timestamps...");
-      }, 2200);
-
-      setTimeout(() => {
-        setWorkflowProgress(88);
-        setActiveStepIndex(4);
-        setCurrentStepMessage("4/4: Detecting high-retention viral hooks & rendering dynamic captions...");
-      }, 3400);
-
-      setTimeout(() => {
-        setWorkflowProgress(100);
-        setIsProcessingWorkflow(false);
-        setCurrentStepMessage("Workflow Completed: 3 AI Shorts generated with synchronized transcripts!");
-
-        const clips = [
-          {
-            id: `short-1-${Date.now()}`,
-            title: "Viral Hook #1 — The Epiphany & Hook",
-            duration: "00:34",
-            viralityScore: 98,
-            transcriptSnippet: "“...and that's the exact moment everything changed for the entire AI pipeline...”",
-            videoUrl: newSignedUrl || "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-          },
-          {
-            id: `short-2-${Date.now()}`,
-            title: "Viral Hook #2 — 3 Steps to Master Video AI",
-            duration: "00:48",
-            viralityScore: 95,
-            transcriptSnippet: "“Step number one is understanding how temporal coherence prevents distortion...”",
-            videoUrl: newSignedUrl || "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-          },
-          {
-            id: `short-3-${Date.now()}`,
-            title: "Viral Hook #3 — Multi-Social Distribution Secret",
-            duration: "00:29",
-            viralityScore: 92,
-            transcriptSnippet: "“If you're not auto-scheduling to TikTok, Reels, and Shorts simultaneously, you're invisible...”",
-            videoUrl: newSignedUrl || "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4",
-          },
-        ];
-
-        setGeneratedClips(clips);
-
-        if (onGenerateShorts) {
-          onGenerateShorts({
-            video: uploadedVideo,
-            projectId: newProjectId,
-            signedUrl: newSignedUrl,
-            clipCount,
-            captionStyle,
-            aspectRatio,
-            detectHooks,
-            autoBroll,
-          });
-        }
-      }, 4500);
+      // 3. Navigate to the dedicated project analysis page for live progress
+      setCurrentStepMessage("Upload complete • Redirecting to AI Analysis workspace...");
+      router.push(`/dashboard/project/${newProjectId}`);
+      setIsProcessingWorkflow(false);
 
     } catch (err) {
-      console.error("Inggest trigger error:", err);
+      console.error("AI Analyse trigger error:", err);
       setIsProcessingWorkflow(false);
-      setCurrentStepMessage("Workflow completed in dev mode");
+      setCurrentStepMessage("Failed to start AI analysis — please try again.");
     }
   };
 
@@ -366,7 +312,7 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
               </span>
             </div>
             <p className="text-xs text-[#8a8f98]">
-              Upload your raw video. When you click <strong>Process Video</strong>, the Inggest background function stores the video in your Supabase bucket, generates signed playback URLs, transcribes with Whisper AI, and outputs 9:16 shorts.
+              Upload your raw video. When you click <strong>AI Analyse</strong>, the Inngest background function stores the video in your Supabase bucket, transcribes it with Deepgram AI from its signed URL, generates synchronized captions, and outputs 9:16 shorts.
             </p>
           </div>
         </div>
@@ -561,7 +507,7 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
                 </h3>
               </div>
               <span className="mono-badge text-[10px] text-[#02b8cc]">
-                Supabase Storage + Whisper AI + Supabase DB
+                Supabase Storage + Deepgram AI + Auto Captions
               </span>
             </div>
 
@@ -641,23 +587,23 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
               </label>
             </div>
 
-            {/* PRIMARY PROCESS VIDEO BUTTON */}
+            {/* PRIMARY AI ANALYSE BUTTON */}
             <div className="pt-2">
               <button
                 type="button"
-                onClick={handleExecuteInggestWorkflow}
+                onClick={handleAiAnalyse}
                 disabled={isProcessingWorkflow}
                 className="btn-acid-lime w-full py-3.5 text-xs font-semibold cursor-pointer shadow-[0_0_24px_rgba(228,242,34,0.3)] flex items-center justify-center gap-2 disabled:opacity-60"
               >
                 {isProcessingWorkflow ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin text-[#08090a]" />
-                    <span>Executing Inggest AWS S3 &amp; Whisper AI Workflow ({workflowProgress}%)...</span>
+                    <span>AI Analysing with Deepgram ({workflowProgress}%)...</span>
                   </>
                 ) : (
                   <>
-                    <Zap className="w-4 h-4 text-[#08090a]" />
-                    <span>Process Video &rarr; Upload to S3 &amp; Run Inggest Function</span>
+                    <Sparkles className="w-4 h-4 text-[#08090a]" />
+                    <span>AI Analyse &rarr; Deepgram Transcription + Auto Captions</span>
                   </>
                 )}
               </button>
@@ -720,14 +666,14 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
                 <div className={`p-2.5 rounded-lg border ${workflowProgress >= 70 ? "bg-[#27a644]/10 border-[#27a644]/30 text-[#27a644]" : "bg-[#161718] border-[#23252a] text-[#8a8f98]"}`}>
                   <div className="flex items-center gap-1.5">
                     {workflowProgress >= 70 ? <Check className="w-3 h-3" /> : <span>3.</span>}
-                    <span>Whisper Transcripts</span>
+                    <span>Deepgram Transcription</span>
                   </div>
                 </div>
 
                 <div className={`p-2.5 rounded-lg border ${workflowProgress >= 100 ? "bg-[#27a644]/10 border-[#27a644]/30 text-[#27a644]" : "bg-[#161718] border-[#23252a] text-[#8a8f98]"}`}>
                   <div className="flex items-center gap-1.5">
                     {workflowProgress >= 100 ? <Check className="w-3 h-3" /> : <span>4.</span>}
-                    <span>Viral Shorts Ready</span>
+                    <span>Captions &amp; Shorts Ready</span>
                   </div>
                 </div>
               </div>

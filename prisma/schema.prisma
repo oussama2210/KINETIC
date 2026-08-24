@@ -45,7 +45,8 @@ model Project {
   progress          Int          @default(0)
   currentStep       String?      @default("Initialized")
   errorMessage      String?
-  transcription     String?      // Full Whisper text
+  transcription     String?      // Full Deepgram transcript text
+  captions          Json?        // Word-timestamped caption cues [{start, end, text}]
   clipCount         String?      @default("3-5 Viral Shorts")
   captionStyle      String?      @default("Hormozi Style (Dynamic Neon)")
   aspectRatio       String?      @default("9:16 Vertical")
