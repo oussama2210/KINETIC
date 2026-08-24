@@ -1,0 +1,108 @@
+// This is your Prisma schema file for Supabase Serverless PostgreSQL
+// Connects to Supabase Database via DATABASE_URL and DIRECT_URL
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id              String          @id @default(cuid())
+  clerkId         String          @unique
+  email           String          @unique
+  firstName       String?
+  lastName        String?
+  imageUrl        String?
+  plan            String          @default("CREATOR") // CREATOR, STUDIO_PRO, ENTERPRISE
+  computeCredits  Int             @default(600)       // GPU minutes
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  videos          Video[]
+  projects        Project[]
+  socialAccounts  SocialAccount[]
+
+  @@index([clerkId])
+  @@index([email])
+}
+
+model Project {
+  id                String       @id @default(cuid())
+  userId            String
+  user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title             String
+  originalFileName  String?
+  fileSize          String?
+  duration          String?      @default("00:00")
+  s3Key             String?
+  s3Bucket          String?
+  signedUrl         String?
+  status            String       @default("PENDING") // PENDING, UPLOADING, PROCESSING, TRANSCRIBING, COMPLETED, FAILED
+  progress          Int          @default(0)
+  currentStep       String?      @default("Initialized")
+  errorMessage      String?
+  transcription     String?      // Full Whisper text
+  clipCount         String?      @default("3-5 Viral Shorts")
+  captionStyle      String?      @default("Hormozi Style (Dynamic Neon)")
+  aspectRatio       String?      @default("9:16 Vertical")
+  detectHooks       Boolean      @default(true)
+  autoBroll         Boolean      @default(true)
+  shorts            ShortClip[]
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  @@index([userId])
+  @@index([status])
+}
+
+model ShortClip {
+  id                String       @id @default(cuid())
+  projectId         String
+  project           Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title             String
+  videoUrl          String
+  duration          String       @default("00:30")
+  viralityScore     Int          @default(90)
+  transcriptSnippet String?
+  aspectRatio       String       @default("9:16")
+  createdAt         DateTime     @default(now())
+
+  @@index([projectId])
+}
+
+model Video {
+  id              String          @id @default(cuid())
+  userId          String
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title           String
+  prompt          String
+  camera          String?
+  aspectRatio     String          @default("16:9")
+  videoUrl        String
+  duration        String          @default("00:10")
+  fps             Int             @default(60)
+  resolution      String          @default("3840x2160")
+  published       Boolean         @default(false)
+  channels        String[]        @default([])
+  createdAt       DateTime        @default(now())
+
+  @@index([userId])
+}
+
+model SocialAccount {
+  id              String          @id @default(cuid())
+  userId          String
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  platform        String          // TIKTOK, REELS, SHORTS, X, LINKEDIN
+  handle          String
+  connected       Boolean         @default(true)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@unique([userId, platform])
+  @@index([userId])
+}
