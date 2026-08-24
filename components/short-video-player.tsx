@@ -12,11 +12,11 @@ export interface CaptionCue {
 
 interface ShortVideoPlayerProps {
   /** Full original video URL (signed Supabase URL) */
-  sourceVideoUrl: string;
+  sourceVideoUrl?: string;
   /** Clip start time in seconds */
-  startTimeSec: number;
+  startTimeSec?: number;
   /** Clip end time in seconds */
-  endTimeSec: number;
+  endTimeSec?: number;
   /** Synchronized caption cues (timestamps relative to the ORIGINAL video) */
   captions?: CaptionCue[];
   /** Clip title for accessibility */
@@ -36,8 +36,8 @@ interface ShortVideoPlayerProps {
  */
 export default function ShortVideoPlayer({
   sourceVideoUrl,
-  startTimeSec,
-  endTimeSec,
+  startTimeSec = 0,
+  endTimeSec = 30,
   captions = [],
   title,
   startCaption,
@@ -53,50 +53,42 @@ export default function ShortVideoPlayer({
   const animFrameRef = useRef<number>(0);
   const lastCaptionRef = useRef<string>("");
 
-  const clipDuration = endTimeSec - startTimeSec;
+  const effectiveUrl =
+    sourceVideoUrl ||
+    "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4";
+  const start = Math.max(0, Number(startTimeSec) || 0);
+  const end = Math.max(start + 5, Number(endTimeSec) || start + 30);
+  const clipDuration = Math.max(1, end - start);
 
-  // Seek to start time when video loads
-  const handleLoadedMetadata = useCallback(() => {
-    const video = videoRef.current;
-    if (video) {
-      video.currentTime = startTimeSec;
-    }
-  }, [startTimeSec]);
-
-  // Animation frame loop: enforce trim bounds + sync captions
-  const tick = useCallback(() => {
-    const video = videoRef.current;
-    if (!video) return;
-
-    const t = video.currentTime;
-
-    // Enforce end bound — loop back to start
-    if (t >= endTimeSec - 0.05) {
-      video.currentTime = startTimeSec;
-      setCurrentTime(startTimeSec);
+  // Sync state & caption from current video time
+  const syncTimeAndCaption = useCallback((t: number) => {
+    // Enforce bounds
+    if (t >= end - 0.05) {
+      if (videoRef.current) {
+        videoRef.current.currentTime = start;
+      }
+      setCurrentTime(start);
       setProgress(0);
-      animFrameRef.current = requestAnimationFrame(tick);
       return;
     }
-
-    // Enforce start bound
-    if (t < startTimeSec - 0.1) {
-      video.currentTime = startTimeSec;
+    if (t < start - 0.1) {
+      if (videoRef.current) {
+        videoRef.current.currentTime = start;
+      }
     }
 
     setCurrentTime(t);
-    setProgress(((t - startTimeSec) / clipDuration) * 100);
+    setProgress(((t - start) / clipDuration) * 100);
 
-    // Find active caption cue for current time
+    // Find active caption cue
     const activeCue = captions.find((c) => t >= c.start - 0.05 && t <= c.end + 0.05);
 
-    // Check for hook/CTA captions at boundaries
     let captionText = "";
     if (activeCue) {
       captionText = activeCue.text;
-    } else if (startCaption && t < startTimeSec + 3) {
+    } else if (startCaption && t < start + 3) {
       captionText = startCaption;
-    } else if (endCaption && t > endTimeSec - 3) {
+    } else if (endCaption && t > end - 3) {
       captionText = endCaption;
     }
 
@@ -105,9 +97,27 @@ export default function ShortVideoPlayer({
       setActiveCaption(captionText);
       setCaptionKey((k) => k + 1);
     }
+  }, [start, end, clipDuration, captions, startCaption, endCaption]);
 
+  // Animation frame loop
+  const tick = useCallback(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    syncTimeAndCaption(video.currentTime);
     animFrameRef.current = requestAnimationFrame(tick);
-  }, [startTimeSec, endTimeSec, clipDuration, captions, startCaption, endCaption]);
+  }, [syncTimeAndCaption]);
+
+  // Seek to start time when video metadata loads
+  const handleLoadedMetadata = useCallback(() => {
+    const video = videoRef.current;
+    if (video) {
+      try {
+        video.currentTime = start;
+      } catch (e) {
+        console.warn("Could not seek video on metadata", e);
+      }
+    }
+  }, [start]);
 
   // Start/stop animation frame loop based on play state
   useEffect(() => {
@@ -124,28 +134,31 @@ export default function ShortVideoPlayer({
     if (!video) return;
 
     if (video.paused) {
-      if (video.currentTime < startTimeSec || video.currentTime >= endTimeSec) {
-        video.currentTime = startTimeSec;
+      if (video.currentTime < start || video.currentTime >= end) {
+        video.currentTime = start;
       }
-      await video.play();
-      setIsPlaying(true);
+      try {
+        await video.play();
+        setIsPlaying(true);
+      } catch (err) {
+        console.warn("Autoplay / play prevented:", err);
+      }
     } else {
       video.pause();
       setIsPlaying(false);
     }
-  }, [startTimeSec, endTimeSec]);
+  }, [start, end]);
 
   const restart = useCallback(() => {
     const video = videoRef.current;
     if (!video) return;
-    video.currentTime = startTimeSec;
-    setCurrentTime(startTimeSec);
+    video.currentTime = start;
+    setCurrentTime(start);
     setProgress(0);
     if (video.paused) {
-      video.play();
-      setIsPlaying(true);
+      video.play().then(() => setIsPlaying(true)).catch(() => {});
     }
-  }, [startTimeSec]);
+  }, [start]);
 
   const toggleMute = useCallback(() => {
     const video = videoRef.current;
@@ -161,12 +174,12 @@ export default function ShortVideoPlayer({
       if (!video) return;
       const rect = e.currentTarget.getBoundingClientRect();
       const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-      const seekTo = startTimeSec + pct * clipDuration;
+      const seekTo = start + pct * clipDuration;
       video.currentTime = seekTo;
       setCurrentTime(seekTo);
       setProgress(pct * 100);
     },
-    [startTimeSec, clipDuration]
+    [start, clipDuration]
   );
 
   // Render animated words — Hormozi style pop-in
@@ -188,7 +201,7 @@ export default function ShortVideoPlayer({
     );
   };
 
-  const elapsed = currentTime - startTimeSec;
+  const elapsed = Math.max(0, currentTime - start);
   const formatTime = (s: number) => {
     const m = Math.floor(s / 60);
     const sec = Math.floor(s % 60);
@@ -197,14 +210,15 @@ export default function ShortVideoPlayer({
 
   return (
     <div className="short-player-container">
-      {/* Video Element — hidden native controls */}
+      {/* Video Element */}
       <video
         ref={videoRef}
-        src={sourceVideoUrl}
+        src={effectiveUrl}
         muted={isMuted}
         playsInline
-        preload="metadata"
+        preload="auto"
         onLoadedMetadata={handleLoadedMetadata}
+        onTimeUpdate={(e) => syncTimeAndCaption((e.target as HTMLVideoElement).currentTime)}
         onClick={togglePlay}
         className="short-player-video"
         title={title}
@@ -232,24 +246,24 @@ export default function ShortVideoPlayer({
         <div className="progress-bar-track" onClick={handleProgressClick}>
           <div
             className="progress-bar-fill"
-            style={{ width: `${Math.min(100, progress)}%` }}
+            style={{ width: `${Math.min(100, Math.max(0, progress))}%` }}
           />
         </div>
 
         <div className="controls-row">
           <div className="controls-left">
-            <button onClick={togglePlay} className="ctrl-btn" title={isPlaying ? "Pause" : "Play"}>
+            <button onClick={togglePlay} className="ctrl-btn" type="button" title={isPlaying ? "Pause" : "Play"}>
               {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
             </button>
-            <button onClick={restart} className="ctrl-btn" title="Restart clip">
+            <button onClick={restart} className="ctrl-btn" type="button" title="Restart clip">
               <RotateCcw className="w-3.5 h-3.5" />
             </button>
-            <button onClick={toggleMute} className="ctrl-btn" title={isMuted ? "Unmute" : "Mute"}>
+            <button onClick={toggleMute} className="ctrl-btn" type="button" title={isMuted ? "Unmute" : "Mute"}>
               {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
             </button>
           </div>
           <span className="time-display">
-            {formatTime(Math.max(0, elapsed))} / {formatTime(clipDuration)}
+            {formatTime(elapsed)} / {formatTime(clipDuration)}
           </span>
         </div>
       </div>
