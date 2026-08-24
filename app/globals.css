@@ -261,3 +261,203 @@ h1, h2, h3, h4, h5, h6 {
   background-color: var(--color-pulse-green);
   animation: pulse-subtle 2s infinite ease-in-out;
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   ShortVideoPlayer — Trim Playback + Hormozi/TikTok Caption Overlay
+   ═══════════════════════════════════════════════════════════════════ */
+
+.short-player-container {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 9 / 16;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #08090a;
+  border: 1px solid #23252a;
+  cursor: pointer;
+}
+
+.short-player-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* ── Caption Overlay ── */
+.caption-overlay {
+  position: absolute;
+  bottom: 56px;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  padding: 0 12px;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.caption-text-wrapper {
+  text-align: center;
+  max-width: 90%;
+}
+
+.caption-words-container {
+  display: inline;
+  line-height: 1.45;
+}
+
+/* Word-by-word animated caption — Hormozi neon style */
+.caption-word {
+  display: inline-block;
+  font-family: 'Inter', 'SF Pro Display', system-ui, sans-serif;
+  font-size: 20px;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+  text-transform: uppercase;
+  color: #ffffff;
+  text-shadow:
+    0 0 8px rgba(228, 242, 34, 0.9),
+    0 0 20px rgba(228, 242, 34, 0.5),
+    0 2px 4px rgba(0, 0, 0, 0.8),
+    0 4px 12px rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  transform: scale(0.5) translateY(8px);
+  animation: caption-word-pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+@keyframes caption-word-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.5) translateY(8px);
+  }
+  60% {
+    opacity: 1;
+    transform: scale(1.15) translateY(-2px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* Highlight every 3rd word with accent color for visual rhythm */
+.caption-word:nth-child(3n) {
+  color: #e4f222;
+  text-shadow:
+    0 0 10px rgba(228, 242, 34, 1),
+    0 0 30px rgba(228, 242, 34, 0.7),
+    0 2px 4px rgba(0, 0, 0, 0.9);
+}
+
+/* ── Play Overlay ── */
+.play-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(8, 9, 10, 0.35);
+  z-index: 15;
+  cursor: pointer;
+}
+
+.play-button-circle {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: rgba(228, 242, 34, 0.2);
+  border: 2px solid rgba(228, 242, 34, 0.6);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+
+.play-button-circle:hover {
+  transform: scale(1.1);
+  background: rgba(228, 242, 34, 0.35);
+}
+
+/* ── Bottom Controls ── */
+.short-player-controls {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: linear-gradient(transparent, rgba(8, 9, 10, 0.92));
+  padding: 16px 10px 8px;
+  z-index: 20;
+}
+
+.progress-bar-track {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
+  cursor: pointer;
+  margin-bottom: 6px;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #e4f222, #02b8cc);
+  transition: width 0.1s linear;
+  box-shadow: 0 0 6px rgba(228, 242, 34, 0.5);
+}
+
+.controls-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.controls-left {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.ctrl-btn {
+  background: none;
+  border: none;
+  color: rgba(255, 255, 255, 0.75);
+  padding: 4px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ctrl-btn:hover {
+  color: #e4f222;
+  background: rgba(228, 242, 34, 0.1);
+}
+
+.time-display {
+  font-family: 'SF Mono', 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.55);
+  letter-spacing: 0.04em;
+}
+
+/* ── Duration Badge ── */
+.clip-duration-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(8, 9, 10, 0.85);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(228, 242, 34, 0.3);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-family: 'SF Mono', monospace;
+  font-size: 10px;
+  color: #e4f222;
+  z-index: 12;
+}

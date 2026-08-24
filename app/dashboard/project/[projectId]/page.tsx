@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import ShortVideoPlayer from "@/components/short-video-player";
 import {
   ArrowLeft,
   RefreshCw,
@@ -28,6 +29,24 @@ interface ShortClipData {
   aspectRatio?: string;
 }
 
+interface GeneratedShortData {
+  id: string;
+  rank: number;
+  title: string;
+  startTimeSec: number;
+  endTimeSec: number;
+  durationSec: number;
+  whyBestReason?: string | null;
+  hookReason?: string | null;
+  seoRanking?: number | null;
+  viralRationale?: string | null;
+  startCaption?: string | null;
+  endCaption?: string | null;
+  captions?: CaptionCue[] | null;
+  transcriptExcerpt?: string | null;
+  viralityScore?: number | null;
+}
+
 interface CaptionCue {
   start: number;
   end: number;
@@ -47,6 +66,7 @@ interface ProjectStatus {
   transcription?: string | null;
   captions?: CaptionCue[] | null;
   shorts?: ShortClipData[];
+  generatedShorts?: GeneratedShortData[];
 }
 
 const PIPELINE_STEPS = [
@@ -283,55 +303,174 @@ export default function ProjectAnalysisPage() {
             </div>
           )}
 
-          {/* Generated Shorts */}
-          <div className="space-y-4">
-            <div className="flex items-center justify-between border-b border-[#23252a] pb-3">
-              <div className="flex items-center gap-2">
-                <Film className="w-4 h-4 text-[#27a644]" />
-                <h3 className="text-sm font-[510] text-white">
-                  Generated AI Shorts ({project.shorts?.length ?? 0})
-                </h3>
-              </div>
-              <span className="text-[11px] font-mono text-[#e4f222]">
-                Ready to Auto-Publish
-              </span>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {(project.shorts ?? []).map((clip) => (
-                <div
-                  key={clip.id}
-                  className="p-4 rounded-xl bg-[#0c0d0e] border border-[#23252a] hover:border-[#e4f222]/50 transition-all space-y-3 flex flex-col justify-between"
-                >
-                  <div className="w-full aspect-[9/14] rounded-lg bg-[#161718] border border-[#23252a] overflow-hidden relative group">
-                    <video
-                      src={clip.videoUrl}
-                      muted
-                      loop
-                      autoPlay
-                      playsInline
-                      controls
-                      className="w-full h-full object-cover"
-                    />
-                    <div className="absolute top-2 left-2 px-2 py-0.5 rounded bg-[#08090a]/90 backdrop-blur-sm border border-[#27a644]/40 text-[10px] font-mono text-[#27a644] flex items-center gap-1">
-                      <Zap className="w-3 h-3 text-[#e4f222]" />
-                      <span>Viral Score: {clip.viralityScore ?? 90}/100</span>
-                    </div>
-                  </div>
-
-                  <div className="space-y-1">
-                    <h4 className="text-xs font-semibold text-white truncate" title={clip.title}>
-                      {clip.title}
-                    </h4>
-                    <div className="flex items-center justify-between text-[10px] font-mono text-[#8a8f98]">
-                      <span>{clip.aspectRatio ?? "9:16 Vertical"}</span>
-                      <span>{clip.duration ?? "00:30"}</span>
-                    </div>
-                  </div>
+          {/* AI-Selected Engaging Moments */}
+          {Array.isArray(project.generatedShorts) && project.generatedShorts.length > 0 && (
+            <div className="hairline-card p-6 space-y-4 bg-[#0f1011] border border-[#23252a] rounded-xl">
+              <div className="flex items-center justify-between border-b border-[#23252a] pb-3">
+                <div className="flex items-center gap-2">
+                  <Zap className="w-4 h-4 text-[#e4f222]" />
+                  <h3 className="text-sm font-[510] text-white">
+                    Gemini AI Selected Moments ({project.generatedShorts.length})
+                  </h3>
                 </div>
-              ))}
+                <span className="text-[11px] font-mono text-[#8a8f98]">
+                  Ranked by viral potential
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {project.generatedShorts.map((short) => (
+                  <div
+                    key={short.id}
+                    className={`p-4 rounded-lg bg-[#08090a] space-y-3 ${
+                      short.rank === 1
+                        ? "border border-[#e4f222]/50 shadow-[0_0_16px_rgba(228,242,34,0.15)]"
+                        : "border border-[#23252a]"
+                    }`}
+                  >
+                    {/* Rank + Title + Timing */}
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-3">
+                        <span
+                          className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-mono font-bold flex-shrink-0 ${
+                            short.rank === 1
+                              ? "bg-[#e4f222] text-[#08090a]"
+                              : "bg-[#161718] text-[#8a8f98] border border-[#23252a]"
+                          }`}
+                        >
+                          {short.rank}
+                        </span>
+                        <div>
+                          <h4 className="text-xs font-semibold text-white" title={short.title}>
+                            {short.title}
+                          </h4>
+                          <span className="text-[10px] font-mono text-[#02b8cc]">
+                            {short.startTimeSec.toFixed(1)}s → {short.endTimeSec.toFixed(1)}s
+                            ({Math.round(short.durationSec)}s clip)
+                          </span>
+                        </div>
+                      </div>
+                      <span className="text-[10px] font-mono text-[#27a644] bg-[#27a644]/10 border border-[#27a644]/30 px-2 py-0.5 rounded flex-shrink-0">
+                        SEO: {short.seoRanking ?? short.viralityScore ?? 90}/100
+                      </span>
+                    </div>
+
+                    {/* Why best short video */}
+                    <div className="p-2.5 rounded bg-[#0c0d0e] border border-[#23252a]/60">
+                      <span className="text-[9px] font-mono uppercase tracking-wider text-[#e4f222] block mb-1">
+                        Why this is the best short video
+                      </span>
+                      <p className="text-[11px] text-[#d0d6e0] leading-relaxed">
+                        {short.whyBestReason || short.hookReason}
+                      </p>
+                    </div>
+
+                    {/* Viral ranking rationale */}
+                    {short.viralRationale && (
+                      <div className="p-2.5 rounded bg-[#0c0d0e] border border-[#23252a]/60">
+                        <span className="text-[9px] font-mono uppercase tracking-wider text-[#02b8cc] block mb-1">
+                          Algorithm &amp; SEO Rationale
+                        </span>
+                        <p className="text-[11px] text-[#d0d6e0] leading-relaxed">{short.viralRationale}</p>
+                      </div>
+                    )}
+
+                    {/* Start / End captions */}
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="p-2 rounded bg-[#121315] border border-[#23252a]/60">
+                        <span className="text-[9px] font-mono uppercase text-[#62666d] block mb-0.5">
+                          Start Caption
+                        </span>
+                        <span className="text-[11px] font-bold text-[#e4f222]">{short.startCaption || "—"}</span>
+                      </div>
+                      <div className="p-2 rounded bg-[#121315] border border-[#23252a]/60">
+                        <span className="text-[9px] font-mono uppercase text-[#62666d] block mb-0.5">
+                          End Caption (CTA)
+                        </span>
+                        <span className="text-[11px] font-bold text-[#02b8cc]">{short.endCaption || "—"}</span>
+                      </div>
+                    </div>
+
+                    {short.transcriptExcerpt && (
+                      <p className="text-[10px] text-[#8a8f98] italic line-clamp-2">
+                        “{short.transcriptExcerpt}”
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
+
+          {/* Generated Short Video Players with Trim + Captions */}
+          {Array.isArray(project.generatedShorts) && project.generatedShorts.length > 0 && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between border-b border-[#23252a] pb-3">
+                <div className="flex items-center gap-2">
+                  <Film className="w-4 h-4 text-[#27a644]" />
+                  <h3 className="text-sm font-[510] text-white">
+                    AI Short Video Previews ({project.generatedShorts.length})
+                  </h3>
+                </div>
+                <span className="text-[11px] font-mono text-[#e4f222]">
+                  Trimmed &amp; Captioned
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                {project.generatedShorts.map((short) => {
+                  // Use the source video URL (original uploaded video) for trim playback
+                  const sourceUrl = short.videoUrl || project.signedUrl || "";
+                  // Parse captions — they're stored as JSON in the DB
+                  const clipCaptions = Array.isArray(short.captions)
+                    ? (short.captions as { start: number; end: number; text: string }[])
+                    : [];
+
+                  return (
+                    <div
+                      key={short.id}
+                      className="rounded-xl bg-[#0c0d0e] border border-[#23252a] hover:border-[#e4f222]/50 transition-all overflow-hidden flex flex-col"
+                    >
+                      {/* Trim-Playback Video Player with Caption Overlay */}
+                      <ShortVideoPlayer
+                        sourceVideoUrl={sourceUrl}
+                        startTimeSec={short.startTimeSec}
+                        endTimeSec={short.endTimeSec}
+                        captions={clipCaptions}
+                        title={short.title}
+                        startCaption={short.startCaption || undefined}
+                        endCaption={short.endCaption || undefined}
+                      />
+
+                      {/* Card Meta */}
+                      <div className="p-3 space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <h4 className="text-xs font-semibold text-white truncate flex-1 mr-2" title={short.title}>
+                            {short.title}
+                          </h4>
+                          <span className="text-[10px] font-mono text-[#27a644] bg-[#27a644]/10 border border-[#27a644]/30 px-2 py-0.5 rounded flex-shrink-0">
+                            SEO: {short.seoRanking ?? short.viralityScore ?? 90}/100
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between text-[10px] font-mono text-[#8a8f98]">
+                          <span>9:16 Vertical</span>
+                          <span>
+                            {short.startTimeSec.toFixed(1)}s → {short.endTimeSec.toFixed(1)}s
+                            ({Math.round(short.durationSec)}s)
+                          </span>
+                        </div>
+                        {(short.whyBestReason || short.hookReason) && (
+                          <p className="text-[10px] text-[#8a8f98] line-clamp-2 mt-1">
+                            {short.whyBestReason || short.hookReason}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>

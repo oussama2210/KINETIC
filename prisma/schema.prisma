@@ -53,6 +53,7 @@ model Project {
   detectHooks       Boolean      @default(true)
   autoBroll         Boolean      @default(true)
   shorts            ShortClip[]
+  generatedShorts   GeneratedShort[]
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
 
@@ -71,6 +72,32 @@ model ShortClip {
   transcriptSnippet String?
   aspectRatio       String       @default("9:16")
   createdAt         DateTime     @default(now())
+
+  @@index([projectId])
+}
+
+// AI-selected engaging moments cut from the long uploaded video
+model GeneratedShort {
+  id                String   @id @default(cuid())
+  projectId         String
+  project           Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  rank              Int      @default(1)            // 1 = best moment
+  title             String
+  startTimeSec      Float                           // clip start in source video (seconds)
+  endTimeSec        Float                           // clip end in source video (seconds)
+  durationSec       Float    @default(30)           // between 30 and 90 seconds
+  whyBestReason     String                          // why it's the best short video
+  hookReason        String?                         // hook trigger explanation
+  seoRanking        Int      @default(90)           // SEO & viral ranking score out of 100
+  viralRationale    String?                         // engagement rationale for algorithms
+  startCaption      String?                         // on-screen caption at start
+  endCaption        String?                         // call-to-action caption at end
+  captions          Json?                           // array of synchronized caption cues for this exact short
+  transcriptExcerpt String?                         // transcript text inside the window
+  viralityScore     Int      @default(85)           // legacy score support
+  videoUrl          String?                         // video source playback URL
+  status            String   @default("SELECTED")   // SELECTED, READY, COMPLETED
+  createdAt         DateTime @default(now())
 
   @@index([projectId])
 }
