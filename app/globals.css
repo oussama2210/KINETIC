@@ -310,7 +310,7 @@ h1, h2, h3, h4, h5, h6 {
 /* Word-by-word animated caption — Hormozi neon style */
 .caption-word {
   display: inline-block;
-  font-family: 'Inter', 'SF Pro Display', system-ui, sans-serif;
+  font-family: 'Inter', 'SF Pro Display', 'Segoe UI', Tahoma, system-ui, sans-serif;
   font-size: 20px;
   font-weight: 900;
   letter-spacing: -0.02em;

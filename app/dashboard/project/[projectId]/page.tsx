@@ -160,10 +160,24 @@ export default function ProjectAnalysisPage() {
   }, [projectId, startPolling, stopPolling]);
 
   const triggerDirectDownload = (targetUrl: string, fileName: string) => {
-    // Direct browser download straight from storage — no fetch/blob buffering,
-    // nothing proxied through the server (avoids Vercel timeouts)
+    // Browsers IGNORE the <a download> attribute for cross-origin URLs, so for
+    // Supabase Storage links we pass Supabase's native `?download=` param —
+    // the server then sends Content-Disposition: attachment and the file
+    // downloads directly from storage (nothing proxied, no Vercel timeout).
+    let href = targetUrl;
+    if (/supabase\.(co|com)/i.test(targetUrl)) {
+      try {
+        const url = new URL(targetUrl);
+        url.searchParams.set("download", fileName);
+        href = url.toString();
+      } catch {
+        const sep = targetUrl.includes("?") ? "&" : "?";
+        href = `${targetUrl}${sep}download=${encodeURIComponent(fileName)}`;
+      }
+    }
+
     const link = document.createElement("a");
-    link.href = targetUrl;
+    link.href = href;
     link.download = fileName;
     link.target = "_blank";
     link.rel = "noopener noreferrer";
@@ -356,7 +370,7 @@ export default function ProjectAnalysisPage() {
                 Analysis Complete
               </span>
             </div>
-            <p className="text-xs text-[#d0d6e0] leading-relaxed whitespace-pre-wrap">
+            <p dir="auto" className="text-xs text-[#d0d6e0] leading-relaxed whitespace-pre-wrap">
               {project.transcription || "No speech detected in this video."}
             </p>
           </div>
@@ -386,7 +400,7 @@ export default function ProjectAnalysisPage() {
                       <Clock className="w-3 h-3" />
                       {cue.start.toFixed(1)}s → {cue.end.toFixed(1)}s
                     </span>
-                    <span className="text-[11px] text-white">{cue.text}</span>
+                    <span dir="auto" className="text-[11px] text-white">{cue.text}</span>
                   </div>
                 ))}
               </div>
@@ -504,7 +518,7 @@ export default function ProjectAnalysisPage() {
                             <span className="text-[9px] font-mono uppercase text-[#62666d] block mb-0.5">
                               Start Caption
                             </span>
-                            <span className="text-[11px] font-bold text-[#e4f222]">
+                            <span dir="auto" className="text-[11px] font-bold text-[#e4f222]">
                               {short.startCaption || "—"}
                             </span>
                           </div>
@@ -512,14 +526,14 @@ export default function ProjectAnalysisPage() {
                             <span className="text-[9px] font-mono uppercase text-[#62666d] block mb-0.5">
                               End Caption (CTA)
                             </span>
-                            <span className="text-[11px] font-bold text-[#02b8cc]">
+                            <span dir="auto" className="text-[11px] font-bold text-[#02b8cc]">
                               {short.endCaption || "—"}
                             </span>
                           </div>
                         </div>
 
                         {short.transcriptExcerpt && (
-                          <p className="text-[10px] text-[#8a8f98] italic line-clamp-2">
+                          <p dir="auto" className="text-[10px] text-[#8a8f98] italic line-clamp-2">
                             “{short.transcriptExcerpt}”
                           </p>
                         )}

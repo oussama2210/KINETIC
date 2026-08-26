@@ -264,16 +264,24 @@ export default function ShortVideoPlayer({
   // Render animated words — Hormozi style pop-in
   const renderCaptionWords = () => {
     if (!activeCaption) return null;
+    // Detect Arabic/RTL script so captions read right-to-left
+    const isRtl = /[\u0600-\u06FF]/.test(activeCaption);
     const words = activeCaption.split(/\s+/).filter(Boolean);
     return (
-      <span key={captionKey} className="caption-words-container">
+      <span key={captionKey} className="caption-words-container" dir={isRtl ? "rtl" : "ltr"}>
         {words.map((word, i) => (
           <span
             key={`${captionKey}-${i}`}
             className="caption-word"
-            style={{ animationDelay: `${i * 0.08}s` }}
+            style={{
+              animationDelay: `${i * 0.08}s`,
+              // Explicit margin instead of relying on whitespace text nodes,
+              // which collapse between inline-block spans (Arabic words glued bug).
+              // marginInlineEnd respects RTL automatically.
+              marginInlineEnd: i < words.length - 1 ? "0.35em" : undefined,
+            }}
           >
-            {word}{" "}
+            {word}
           </span>
         ))}
       </span>
