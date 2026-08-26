@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { slidingWindow } from "@arcjet/next";
 import { aj } from "@/lib/arcjet";
-import { prisma } from "@/lib/prisma";
+import { prisma, withDbRetry } from "@/lib/prisma";
 import { getSupabaseReadUrl, hasSupabaseConfig } from "@/lib/supabase";
 import { getPresignedReadUrl, hasStorageCredentials } from "@/lib/s3";
 
@@ -53,17 +53,20 @@ export async function GET(
       return NextResponse.json({ error: "Missing projectId" }, { status: 400 });
     }
 
-    let project = null;
+    let project: any = null;
     try {
-      project = await (prisma as any).project.findUnique({
-        where: { id: projectId },
-        include: {
-          shorts: true,
-          generatedShorts: {
-            orderBy: { rank: "asc" },
+      // withDbRetry absorbs transient Supabase pooler P1001 errors
+      project = await withDbRetry(() =>
+        (prisma as any).project.findUnique({
+          where: { id: projectId },
+          include: {
+            shorts: true,
+            generatedShorts: {
+              orderBy: { rank: "asc" },
+            },
           },
-        },
-      });
+        })
+      );
     } catch (e) {
       console.warn("Prisma project query fallback", e);
     }
