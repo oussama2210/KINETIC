@@ -1,19 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentUser } from "@clerk/nextjs/server";
-import { inngest } from "@/lib/inngest/client";
 import { prisma } from "@/lib/prisma";
-import { getSupabaseUploadUrl, getSupabaseReadUrl, hasSupabaseConfig } from "@/lib/supabase";
-import { getPresignedUploadUrl, getPresignedReadUrl, hasStorageCredentials } from "@/lib/s3";
+import { getSupabaseUploadUrl, hasSupabaseConfig } from "@/lib/supabase";
+import { getPresignedUploadUrl, hasStorageCredentials } from "@/lib/s3";
 
 export async function POST(req: NextRequest) {
   try {
-    const user = await currentUser();
+    // Clerk's backend can be transiently unreachable (fetch failed / proxy).
+    // Don't 500 the whole upload flow because of it — fall back to the
+    // demo user path below instead.
+    let user: Awaited<ReturnType<typeof currentUser>> = null;
+    try {
+      user = await currentUser();
+    } catch (clerkErr) {
+      console.warn("Clerk currentUser() unavailable, using demo user fallback:", clerkErr);
+      user = null;
+    }
     const body = await req.json();
 
     const {
       fileName = "uploaded-raw-video.mp4",
       fileSize = "45.0 MB",
       duration = "04:18",
+      videoUrl,
       clipCount = "3-5 Viral Shorts",
       captionStyle = "Hormozi Style (Dynamic Neon)",
       aspectRatio = "9:16 Vertical",
@@ -54,34 +63,40 @@ export async function POST(req: NextRequest) {
     }
 
     const userId = dbUser.id;
+    const isDirectUrl = Boolean(videoUrl && (videoUrl.startsWith("http://") || videoUrl.startsWith("https://")));
     const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, "_");
-    const storagePath = `raw-videos/${userId}/${Date.now()}-${sanitizedFileName}`;
+    const storagePath = isDirectUrl ? videoUrl : `raw-videos/${userId}/${Date.now()}-${sanitizedFileName}`;
 
     let uploadUrl = "";
-    let signedReadUrl = "";
+    let signedReadUrl = isDirectUrl ? videoUrl : "";
     let bucketName = "videos";
-    let isLiveStorage = false;
+    let isLiveStorage = isDirectUrl;
+    let uploadToken: string | undefined;
+    let storageApiKey: string | undefined;
 
-    // 2. Generate Supabase Storage upload and read URLs
-    if (hasSupabaseConfig) {
-      const sbStorage = await getSupabaseUploadUrl(storagePath);
-      uploadUrl = sbStorage.uploadUrl;
-      bucketName = sbStorage.bucket;
-      isLiveStorage = sbStorage.isLiveStorage;
-      signedReadUrl = await getSupabaseReadUrl(storagePath, bucketName);
-    } else if (hasStorageCredentials) {
-      // AWS S3 fallback
-      const s3Storage = await getPresignedUploadUrl(storagePath, "video/mp4");
-      uploadUrl = s3Storage.uploadUrl;
-      bucketName = s3Storage.bucket;
-      isLiveStorage = s3Storage.isLiveStorage;
-      signedReadUrl = await getPresignedReadUrl(storagePath);
-    } else {
-      const sbStorage = await getSupabaseUploadUrl(storagePath);
-      uploadUrl = sbStorage.uploadUrl;
-      bucketName = sbStorage.bucket;
-      isLiveStorage = false;
-      signedReadUrl = await getSupabaseReadUrl(storagePath, bucketName);
+    // 2. Generate Supabase Storage UPLOAD URL only if this is a file upload (not a direct URL)
+    if (!isDirectUrl) {
+      if (hasSupabaseConfig) {
+        const sbStorage = await getSupabaseUploadUrl(storagePath);
+        uploadUrl = sbStorage.uploadUrl;
+        bucketName = sbStorage.bucket;
+        isLiveStorage = sbStorage.isLiveStorage;
+        uploadToken = sbStorage.token;
+        storageApiKey = sbStorage.apiKey;
+      } else if (hasStorageCredentials) {
+        // AWS S3 fallback
+        const s3Storage = await getPresignedUploadUrl(storagePath, "video/mp4");
+        uploadUrl = s3Storage.uploadUrl;
+        bucketName = s3Storage.bucket;
+        isLiveStorage = s3Storage.isLiveStorage;
+      } else {
+        const sbStorage = await getSupabaseUploadUrl(storagePath);
+        uploadUrl = sbStorage.uploadUrl;
+        bucketName = sbStorage.bucket;
+        isLiveStorage = false;
+        uploadToken = sbStorage.token;
+        storageApiKey = sbStorage.apiKey;
+      }
     }
 
     // 3. Create Project record in Supabase PostgreSQL Database (via Prisma)
@@ -99,7 +114,7 @@ export async function POST(req: NextRequest) {
           signedUrl: signedReadUrl,
           status: "UPLOADING",
           progress: 10,
-          currentStep: "Project created in Supabase DB • Inngest workflow dispatched",
+          currentStep: "Project created in Supabase DB • Waiting for raw video upload",
           clipCount,
           captionStyle,
           aspectRatio,
@@ -123,39 +138,25 @@ export async function POST(req: NextRequest) {
 
     const projectId = project.id;
 
-    // 4. Trigger Inngest Workflow function
-    try {
-      await inngest.send({
-        name: "video/process.started",
-        data: {
-          projectId,
-          userId,
-          s3Key: storagePath,
-          originalFileName: fileName,
-          fileSize,
-          clipCount,
-          captionStyle,
-          aspectRatio,
-          detectHooks,
-          autoBroll,
-        },
-      });
-    } catch (inngestErr) {
-      console.warn("Inngest send event note:", inngestErr);
-    }
+    // NOTE: The Inngest workflow is NOT dispatched here anymore.
+    // It is dispatched by /api/video/dispatch AFTER the client finishes
+    // uploading the raw video to storage — otherwise long uploads race
+    // the workflow and Deepgram/probes get 400s on a missing object.
 
     return NextResponse.json({
       success: true,
       projectId,
       uploadUrl,
       isLiveStorage,
+      token: uploadToken,
+      apiKey: storageApiKey,
       signedUrl: signedReadUrl,
       s3Key: storagePath,
       bucket: bucketName,
       provider: "supabase",
       status: "UPLOADING",
       progress: 10,
-      message: "Inngest video processing workflow triggered with Supabase backend",
+      message: "Project created — upload the video, then call /api/video/dispatch to start the Inngest workflow",
     });
   } catch (error: any) {
     console.error("Video process API error:", error);

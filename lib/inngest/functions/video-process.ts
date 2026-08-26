@@ -1,8 +1,8 @@
 import { inngest } from "../client";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
-import { getSupabaseReadUrl, hasSupabaseConfig } from "@/lib/supabase";
-import { getPresignedReadUrl } from "@/lib/s3";
+import { getSupabaseReadUrl, getSupabaseConfig, hasSupabaseConfig } from "@/lib/supabase";
+import { getPresignedReadUrl, hasStorageCredentials } from "@/lib/s3";
 import {
   transcribeWithDeepgram,
   buildCaptionCues,
@@ -16,6 +16,7 @@ import {
   type SelectedMoment,
 } from "@/lib/gemini";
 import { VIDEO_ANALYSIS_CONFIG } from "@/config/video-analysis";
+import { arcjetGuard, promptInjectionRule } from "@/lib/arcjet-guard";
 
 export interface ProcessVideoEventData {
   projectId: string;
@@ -88,13 +89,89 @@ export const processVideoWorkflow = inngest.createFunction(
       }
     });
 
-    // Step 2: Generate Signed Storage URL & verify storage (40%)
-    const signedUrlData = await step.run("generate-storage-signed-url", async () => {
+    // Step 2: Wait for the client upload to finish, then generate a fresh signed URL (40%)
+    const signedUrlData = await step.run("wait-and-generate-signed-url", async () => {
+      // If s3Key is already a direct URL (pasted link), use it directly
+      if (s3Key.startsWith("http://") || s3Key.startsWith("https://")) {
+        return { signedUrl: s3Key };
+      }
+
       let signedUrl = "";
-      if (hasSupabaseConfig) {
-        signedUrl = await getSupabaseReadUrl(s3Key);
-      } else {
-        signedUrl = await getPresignedReadUrl(s3Key);
+
+      // Probe storage up to 5 times (total wait: ~25s) to let the client upload finish
+      const MAX_PROBES = 5;
+      for (let probe = 1; probe <= MAX_PROBES; probe++) {
+        if (hasSupabaseConfig) {
+          signedUrl = await getSupabaseReadUrl(s3Key);
+        } else {
+          signedUrl = await getPresignedReadUrl(s3Key);
+        }
+
+        // Verify the URL is actually reachable (file exists in storage)
+        const probeHeaders: Record<string, string> = { Range: "bytes=0-10" };
+        if (hasSupabaseConfig && signedUrl.includes("supabase.co")) {
+          const { serviceKey, anonKey } = getSupabaseConfig();
+          const key = serviceKey || anonKey;
+          if (key) {
+            probeHeaders["apikey"] = key;
+            probeHeaders["Authorization"] = `Bearer ${key}`;
+          }
+        }
+
+        try {
+          const res = await fetch(signedUrl, {
+            method: "GET",
+            headers: probeHeaders,
+          });
+          if (res.ok || res.status === 206) {
+            console.log(`[Process] Source video verified in storage on probe ${probe}`);
+            break;
+          }
+          console.warn(`[Process] Probe ${probe}/${MAX_PROBES}: storage returned ${res.status}, waiting...`);
+        } catch (e) {
+          console.warn(`[Process] Probe ${probe}/${MAX_PROBES}: GET probe error, waiting...`);
+        }
+
+        if (probe < MAX_PROBES) {
+          // Progressive delay: 3s, 5s, 7s, 9s, 11s
+          await new Promise((r) => setTimeout(r, (probe * 2 + 1) * 1000));
+          // Re-generate signed URL in case the previous one was signed against a non-existent object
+          signedUrl = "";
+        }
+      }
+
+      // If probes all failed and a real storage backend is configured, the
+      // source object truly does not exist (failed/aborted upload or the file
+      // exceeded the bucket size limit). Abort instead of generating fake
+      // fallback shorts that point at a non-existent object.
+      if (!signedUrl) {
+        const storageConfigured = hasSupabaseConfig || hasStorageCredentials;
+        if (storageConfigured) {
+          try {
+            await prisma.project.update({
+              where: { id: projectId },
+              data: {
+                status: "FAILED",
+                errorMessage:
+                  "Source video was not found in the storage bucket. The upload may have failed, been interrupted, or exceeded the bucket's per-file size limit.",
+                currentStep: "Failed • Source video not found in storage bucket",
+              },
+            });
+          } catch (e) {
+            console.warn("DB update skipped in failed-probe branch", e);
+          }
+          throw new Error(
+            `Source video "${s3Key}" not found in storage after ${MAX_PROBES} probes — upload likely failed or exceeded the bucket size limit`
+          );
+        }
+
+        // No storage configured (mock mode) — keep the demo flowing
+        if (hasSupabaseConfig) {
+          signedUrl = await getSupabaseReadUrl(s3Key);
+        } else {
+          signedUrl = await getPresignedReadUrl(s3Key);
+        }
+        console.warn("[Process] Could not verify source video — proceeding with unverified URL");
       }
 
       try {
@@ -114,8 +191,6 @@ export const processVideoWorkflow = inngest.createFunction(
       return { signedUrl };
     });
 
-    // Step 3: Simulate upload propagation latency
-    await step.sleep("simulate-upload-propagation", "1.5s");
 
     // Step 4: Deepgram AI Speech-to-Text Transcription from uploaded video URL (70%)
     const transcriptionResult = await step.run("transcribe-video-deepgram", async () => {
@@ -205,13 +280,45 @@ export const processVideoWorkflow = inngest.createFunction(
       let moments: SelectedMoment[] = [];
 
       if (hasGeminiKey && transcriptionResult.transcript) {
-        try {
-          moments = await selectBestMoments(
-            transcriptionResult.transcript,
-            captionResult.cues.map((c: CaptionCue) => ({ start: c.start, end: c.end, text: c.text }))
+        // Prompt injection protection: scan the untrusted transcript before
+        // it reaches the Gemini model prompt (Arcjet Guard, LIVE mode)
+        const decision = await arcjetGuard.guard({
+          label: "gemini.select-best-moments",
+          rules: [promptInjectionRule(transcriptionResult.transcript)],
+          metadata: { project_id: projectId, user_id: userId },
+        });
+
+        if (decision.conclusion === "DENY") {
+          const denied = promptInjectionRule.deniedResult(decision);
+          console.warn(
+            "Prompt injection detected in transcript — skipping AI moment selection:",
+            decision.reason,
+            denied ?? ""
           );
-        } catch (aiErr) {
-          console.warn("AI moment selection failed, using fallback:", aiErr);
+          // Fall through to the deterministic fallback moments below
+        } else {
+          if (decision.hasError()) {
+            console.warn("Arcjet guard rule error (fail-open ALLOW)");
+          }
+          try {
+            // Real content duration (from word timestamps or caption timeline)
+            // so Gemini never picks windows beyond the actual video end.
+            const lastWordEnd = transcriptionResult.words.length
+              ? transcriptionResult.words[transcriptionResult.words.length - 1].end
+              : 0;
+            const lastCueEnd = captionResult.cues.length
+              ? Math.max(...captionResult.cues.map((c: CaptionCue) => c.end))
+              : 0;
+            const contentDuration = Math.max(lastWordEnd, lastCueEnd) || undefined;
+
+            moments = await selectBestMoments(
+              transcriptionResult.transcript,
+              captionResult.cues.map((c: CaptionCue) => ({ start: c.start, end: c.end, text: c.text })),
+              contentDuration
+            );
+          } catch (aiErr) {
+            console.warn("AI moment selection failed, using fallback:", aiErr);
+          }
         }
       }
 
@@ -220,6 +327,23 @@ export const processVideoWorkflow = inngest.createFunction(
         const count = VIDEO_ANALYSIS_CONFIG.shortsToGenerate; // Configurable: default 5
         const minSec = VIDEO_ANALYSIS_CONFIG.minShortDurationSec; // 30s
         const maxSec = VIDEO_ANALYSIS_CONFIG.maxShortDurationSec; // 90s
+
+        // Real content duration from the caption timeline — never emit windows
+        // beyond it, and never emit overlapping windows (that produces 4-5
+        // identical shorts instead of distinct moments).
+        const lastCueEnd = captionResult.cues.length
+          ? Math.max(...captionResult.cues.map((c: CaptionCue) => c.end))
+          : 0;
+        const horizon = Math.max(lastCueEnd, minSec);
+        const safeCount = Math.max(
+          1,
+          Math.min(count, Math.max(1, Math.floor(horizon / minSec)))
+        );
+        // Equal-length, back-to-back windows: never overlap, never exceed horizon
+        const clipLen = Math.min(
+          maxSec,
+          Math.max(minSec, Math.floor(horizon / safeCount))
+        );
 
         const sampleHooks = [
           {
@@ -259,9 +383,9 @@ export const processVideoWorkflow = inngest.createFunction(
           },
         ];
 
-        moments = Array.from({ length: count }, (_, i) => {
-          const start = i * 32;
-          const end = start + Math.min(minSec + 12, maxSec);
+        moments = Array.from({ length: safeCount }, (_, i) => {
+          const start = i * clipLen;
+          const end = Math.min(start + clipLen, horizon);
           const hook = sampleHooks[i % sampleHooks.length];
 
           // Extract cues in this window
@@ -274,7 +398,7 @@ export const processVideoWorkflow = inngest.createFunction(
             title: hook.title,
             startTimeSec: start,
             endTimeSec: end,
-            durationSec: end - start,
+            durationSec: Math.round((end - start) * 10) / 10,
             whyBestReason: hook.whyBest,
             seoRanking: hook.seoRanking,
             hookReason: hook.whyBest,

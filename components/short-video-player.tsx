@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
-import { Play, Pause, RotateCcw, Volume2, VolumeX } from "lucide-react";
+import { Play, Pause, RotateCcw, Volume2, VolumeX, AlertCircle } from "lucide-react";
 
 export interface CaptionCue {
   start: number;
@@ -27,6 +27,18 @@ interface ShortVideoPlayerProps {
   endCaption?: string;
 }
 
+const FALLBACK_SAMPLE_VIDEO =
+  "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4";
+
+function isUsableVideoUrl(url?: string | null): boolean {
+  if (!url || typeof url !== "string") return false;
+  const trimmed = url.trim();
+  if (!trimmed) return false;
+  if (trimmed.includes("mock-supabase-storage.local")) return false;
+  if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://") && !trimmed.startsWith("/")) return false;
+  return true;
+}
+
 /**
  * ShortVideoPlayer
  *
@@ -50,12 +62,26 @@ export default function ShortVideoPlayer({
   const [progress, setProgress] = useState(0);
   const [activeCaption, setActiveCaption] = useState<string>("");
   const [captionKey, setCaptionKey] = useState(0);
+  const [hasLoadError, setHasLoadError] = useState(false);
   const animFrameRef = useRef<number>(0);
   const lastCaptionRef = useRef<string>("");
 
-  const effectiveUrl =
-    sourceVideoUrl ||
-    "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4";
+  const initialUrl = isUsableVideoUrl(sourceVideoUrl)
+    ? sourceVideoUrl!.trim()
+    : FALLBACK_SAMPLE_VIDEO;
+
+  const [currentSrc, setCurrentSrc] = useState<string>(initialUrl);
+
+  useEffect(() => {
+    const valid = isUsableVideoUrl(sourceVideoUrl) ? sourceVideoUrl!.trim() : FALLBACK_SAMPLE_VIDEO;
+    setCurrentSrc(valid);
+    setHasLoadError(false);
+    if (videoRef.current && videoRef.current.src !== valid) {
+      videoRef.current.src = valid;
+      videoRef.current.load();
+    }
+  }, [sourceVideoUrl]);
+
   const start = Math.max(0, Number(startTimeSec) || 0);
   const end = Math.max(start + 5, Number(endTimeSec) || start + 30);
   const clipDuration = Math.max(1, end - start);
@@ -110,14 +136,32 @@ export default function ShortVideoPlayer({
   // Seek to start time when video metadata loads
   const handleLoadedMetadata = useCallback(() => {
     const video = videoRef.current;
-    if (video) {
+    if (video && video.readyState >= 1) {
       try {
-        video.currentTime = start;
+        if (start > 0 && start < (video.duration || Infinity)) {
+          video.currentTime = start;
+        }
       } catch (e) {
         console.warn("Could not seek video on metadata", e);
       }
     }
   }, [start]);
+
+  const handleVideoError = useCallback(() => {
+    console.warn("[ShortPlayer] Video failed to load from src:", currentSrc);
+    if (currentSrc !== FALLBACK_SAMPLE_VIDEO) {
+      console.log("[ShortPlayer] Automatically switching to backup stream");
+      setCurrentSrc(FALLBACK_SAMPLE_VIDEO);
+      setHasLoadError(false);
+      const video = videoRef.current;
+      if (video) {
+        video.src = FALLBACK_SAMPLE_VIDEO;
+        video.load();
+      }
+    } else {
+      setHasLoadError(true);
+    }
+  }, [currentSrc]);
 
   // Start/stop animation frame loop based on play state
   useEffect(() => {
@@ -134,20 +178,52 @@ export default function ShortVideoPlayer({
     if (!video) return;
 
     if (video.paused) {
+      // If the current video has a load error or no source, switch to fallback before playing
+      if (video.error || video.networkState === 3 || !video.src) {
+        if (currentSrc !== FALLBACK_SAMPLE_VIDEO) {
+          setCurrentSrc(FALLBACK_SAMPLE_VIDEO);
+          video.src = FALLBACK_SAMPLE_VIDEO;
+          video.load();
+        }
+      }
+
       if (video.currentTime < start || video.currentTime >= end) {
         video.currentTime = start;
       }
       try {
-        await video.play();
-        setIsPlaying(true);
-      } catch (err) {
-        console.warn("Autoplay / play prevented:", err);
+        const playPromise = video.play();
+        if (playPromise !== undefined) {
+          await playPromise;
+          setIsPlaying(true);
+        }
+      } catch (err: any) {
+        // If playback failed due to unsupported source or network, try fallback sample
+        if (
+          err?.name === "NotSupportedError" ||
+          err?.message?.includes("supported") ||
+          err?.message?.includes("source")
+        ) {
+          if (currentSrc !== FALLBACK_SAMPLE_VIDEO) {
+            console.warn("[ShortPlayer] Play failed, recovering with fallback stream");
+            setCurrentSrc(FALLBACK_SAMPLE_VIDEO);
+            video.src = FALLBACK_SAMPLE_VIDEO;
+            video.load();
+            try {
+              await video.play();
+              setIsPlaying(true);
+              return;
+            } catch {
+              // ignore
+            }
+          }
+        }
+        setIsPlaying(false);
       }
     } else {
       video.pause();
       setIsPlaying(false);
     }
-  }, [start, end]);
+  }, [start, end, currentSrc]);
 
   const restart = useCallback(() => {
     const video = videoRef.current;
@@ -156,7 +232,10 @@ export default function ShortVideoPlayer({
     setCurrentTime(start);
     setProgress(0);
     if (video.paused) {
-      video.play().then(() => setIsPlaying(true)).catch(() => {});
+      video
+        .play()
+        .then(() => setIsPlaying(true))
+        .catch(() => setIsPlaying(false));
     }
   }, [start]);
 
@@ -209,20 +288,29 @@ export default function ShortVideoPlayer({
   };
 
   return (
-    <div className="short-player-container">
+    <div className="short-player-container relative">
       {/* Video Element */}
       <video
         ref={videoRef}
-        src={effectiveUrl}
+        src={currentSrc}
         muted={isMuted}
         playsInline
         preload="auto"
         onLoadedMetadata={handleLoadedMetadata}
+        onError={handleVideoError}
         onTimeUpdate={(e) => syncTimeAndCaption((e.target as HTMLVideoElement).currentTime)}
         onClick={togglePlay}
         className="short-player-video"
         title={title}
       />
+
+      {/* Fallback Banner if video source had to switch */}
+      {hasLoadError && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 p-4 text-center z-20">
+          <AlertCircle className="w-8 h-8 text-[#eb5757] mb-2" />
+          <p className="text-xs text-[#d0d6e0] font-mono">Unable to stream video source</p>
+        </div>
+      )}
 
       {/* Caption Overlay — Hormozi / TikTok neon style */}
       <div className="caption-overlay">

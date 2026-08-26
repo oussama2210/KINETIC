@@ -64,6 +64,7 @@ Below is the timestamped transcript of a long video${videoDurationSec ? ` (${Mat
 TASK:
 Analyze the full transcript and select the ${shortsToGenerate} BEST engaging moments to cut into high-performing short vertical videos.
 Every short video MUST be strictly between ${minShortDurationSec} and ${maxShortDurationSec} seconds in duration.
+CRITICAL: each moment MUST cover a DISTINCT, NON-OVERLAPPING time window. Never repeat or reuse the same segment — every startTimeSec must come from a different part of the transcript.
 
 For each moment return:
 - "rank": integer (1 = best short video overall)
@@ -128,14 +129,25 @@ ${timeline || transcript}`;
 
   const moments = Array.isArray(parsed.moments) ? parsed.moments : [];
 
-  return moments
+  // Never let a moment window reach past the real end of the content —
+  // otherwise the player/FFmpeg trim produces repeated identical tails.
+  const lastCueEnd = cues.length ? Math.max(...cues.map((c) => c.end)) : 0;
+  const horizon = Math.max(
+    videoDurationSec ?? 0,
+    lastCueEnd,
+    minShortDurationSec
+  );
+
+  const mapped = moments
     .map((m, idx): SelectedMoment => {
-      const start = Math.max(0, Number(m.startTimeSec) || 0);
+      const start = Math.min(Math.max(0, Number(m.startTimeSec) || 0), Math.max(0, horizon - minShortDurationSec));
       let end = Number(m.endTimeSec) || start + minShortDurationSec;
 
-      // Enforce the 30s to 90s duration bounds strictly
+      // Enforce the 30s to 90s duration bounds strictly + clamp to content end
       if (end - start < minShortDurationSec) end = start + minShortDurationSec;
       if (end - start > maxShortDurationSec) end = start + maxShortDurationSec;
+      if (end > horizon) end = horizon;
+      if (end - start < 5) return null as unknown as SelectedMoment;
 
       const durationSec = Math.round((end - start) * 10) / 10;
       const seoScore = Math.min(100, Math.max(1, Number(m.seoRanking) || 90));
@@ -179,5 +191,58 @@ ${timeline || transcript}`;
         viralityScore: seoScore,
       };
     })
+    .filter((m): m is SelectedMoment => Boolean(m))
     .sort((a, b) => a.rank - b.rank);
+
+  // Deduplicate: drop moments that heavily overlap an already-kept one
+  // (Gemini often repeats the same "best" window several times).
+  const kept: SelectedMoment[] = [];
+  for (const m of mapped) {
+    const duplicate = kept.some((k) => {
+      const overlap = Math.min(m.endTimeSec, k.endTimeSec) - Math.max(m.startTimeSec, k.startTimeSec);
+      return overlap > 0.5 * Math.min(m.durationSec, k.durationSec);
+    });
+    if (!duplicate) kept.push(m);
+  }
+
+  // Backfill with distinct windows if dedup removed too many
+  let rank = kept.length;
+  let cursor = 0;
+  while (kept.length < shortsToGenerate && cursor + 10 < horizon) {
+    const overlaps = kept.some(
+      (k) => cursor < k.endTimeSec && cursor + minShortDurationSec > k.startTimeSec
+    );
+    if (!overlaps) {
+      const start = cursor;
+      const end = Math.min(horizon, start + minShortDurationSec);
+      if (end - start >= Math.min(15, minShortDurationSec)) {
+        rank += 1;
+        const windowCues = cues.filter((c) => c.start >= start - 0.5 && c.end <= end + 0.5);
+        kept.push({
+          rank,
+          title: `Hidden Gem Segment #${rank}`,
+          startTimeSec: start,
+          endTimeSec: end,
+          durationSec: Math.round((end - start) * 10) / 10,
+          whyBestReason: "Distinct non-overlapping segment selected to guarantee variety across shorts.",
+          seoRanking: Math.max(60, 90 - rank * 2),
+          hookReason: "Fresh angle on the content that complements the other clips.",
+          viralRationale: "Additional unique perspective increases total channel watch time.",
+          startCaption: "Don't miss this part",
+          endCaption: "Follow for more",
+          captions: windowCues.length > 0 ? windowCues : [{ start, end, text: "Don't miss this part" }],
+          transcriptExcerpt: windowCues.map((c) => c.text).join(" ").slice(0, 200),
+          viralityScore: Math.max(60, 90 - rank * 2),
+        });
+      }
+    }
+    cursor += 10;
+  }
+
+  kept.sort((a, b) => a.rank - b.rank);
+  kept.forEach((m, i) => {
+    m.rank = i + 1;
+  });
+
+  return kept;
 }

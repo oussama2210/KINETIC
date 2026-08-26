@@ -70,6 +70,10 @@ export async function getPresignedReadUrl(
   key: string,
   expiresInSeconds: number = 86400 // 24 hours
 ): Promise<string> {
+  if (key.startsWith("http://") || key.startsWith("https://")) {
+    return key;
+  }
+
   const s3 = getS3Client();
 
   if (!s3) {

@@ -17,6 +17,8 @@ import {
   Zap,
   FileText,
   Clock,
+  Download,
+  Loader2,
 } from "lucide-react";
 
 interface ShortClipData {
@@ -46,6 +48,9 @@ interface GeneratedShortData {
   transcriptExcerpt?: string | null;
   viralityScore?: number | null;
   videoUrl?: string | null;
+  renderStatus?: string | null;
+  renderedVideoUrl?: string | null;
+  renderError?: string | null;
 }
 
 interface CaptionCue {
@@ -84,54 +89,138 @@ export default function ProjectAnalysisPage() {
   const [project, setProject] = useState<ProjectStatus | null>(null);
   const [isPolling, setIsPolling] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Shorts with a render job in flight (local optimistic state, mirrored by DB renderStatus)
+  const [pendingRenders, setPendingRenders] = useState<string[]>([]);
+  const pendingRendersRef = useRef<string[]>([]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollCountRef = useRef(0);
 
-  useEffect(() => {
-    if (!projectId) return;
+  const stopPolling = React.useCallback(() => {
+    setIsPolling(false);
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }, []);
 
-    let cancelled = false;
+  const startPolling = React.useCallback(() => {
+    if (pollRef.current) return;
+    setIsPolling(true);
 
-    const poll = async () => {
+    const tick = async () => {
       pollCountRef.current += 1;
-      // Stop after ~5 minutes of polling
-      if (pollCountRef.current > 150) {
-        stop();
-        setError("Analysis is taking longer than expected — check the Inngest dashboard.");
-        return;
-      }
 
       try {
         const res = await fetch(`/api/video/status/${projectId}`, { cache: "no-store" });
         const data = await res.json();
 
-        if (!data?.project || cancelled) return;
+        if (!data?.project) return;
         setProject(data.project);
 
-        if (data.project.status === "COMPLETED") {
-          stop();
+        const shorts: GeneratedShortData[] = data.project.generatedShorts || [];
+        const busyShorts =
+          pendingRendersRef.current.length > 0 ||
+          shorts.some(
+            (s) => s.renderStatus === "QUEUED" || s.renderStatus === "RENDERING"
+          );
+
+        // Stop once analysis is done AND no background renders are running
+        if (data.project.status === "COMPLETED" && !busyShorts) {
+          stopPolling();
+          return;
+        }
+
+        // ~5 min cap for the analysis phase, extended while renders are active
+        if (!busyShorts && pollCountRef.current > 150) {
+          stopPolling();
+          setError("Analysis is taking longer than expected — check the Inngest dashboard.");
+          return;
+        }
+        // Absolute safety cap (~20 min) so polling never runs forever
+        if (pollCountRef.current > 600) {
+          stopPolling();
+          return;
         }
       } catch (e) {
         console.warn("Project status polling notice:", e);
       }
     };
 
-    const stop = () => {
-      setIsPolling(false);
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
-    };
+    tick();
+    pollRef.current = setInterval(tick, 2000);
+  }, [projectId, stopPolling]);
 
-    poll();
-    pollRef.current = setInterval(poll, 2000);
-
+  useEffect(() => {
+    if (!projectId) return;
+    startPolling();
     return () => {
-      cancelled = true;
-      stop();
+      stopPolling();
+      pollCountRef.current = 0;
     };
-  }, [projectId]);
+  }, [projectId, startPolling, stopPolling]);
+
+  const triggerDirectDownload = (targetUrl: string, fileName: string) => {
+    // Direct browser download straight from storage — no fetch/blob buffering,
+    // nothing proxied through the server (avoids Vercel timeouts)
+    const link = document.createElement("a");
+    link.href = targetUrl;
+    link.download = fileName;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  };
+
+  /**
+   * Download button handler.
+   * - If the FFmpeg-rendered HD MP4 is ready → instant direct download.
+   * - Otherwise → fire-and-forget API call that just queues an Inngest render
+   *   job and returns immediately (no long-running HTTP request, no timeout).
+   *   The button shows a loading state until polling sees renderStatus READY.
+   */
+  const handleDownloadShort = async (short: GeneratedShortData) => {
+    const fileName = `${short.title.replace(/[^a-zA-Z0-9_-]/g, "_")}.mp4`;
+
+    // Already rendered — download the real HD file directly
+    if (short.renderStatus === "READY" && short.renderedVideoUrl) {
+      triggerDirectDownload(short.renderedVideoUrl, fileName);
+      return;
+    }
+
+    const isBusy =
+      short.renderStatus === "QUEUED" ||
+      short.renderStatus === "RENDERING" ||
+      pendingRenders.includes(short.id);
+
+    if (isBusy) return;
+
+    try {
+      const res = await fetch("/api/video/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shortId: short.id }),
+      });
+      const data = await res.json();
+
+      if (data?.success && data.downloadUrl) {
+        // Render was already done server-side — grab it right away
+        triggerDirectDownload(data.downloadUrl, fileName);
+        return;
+      }
+
+      if (data?.success) {
+        // Job queued — show loading state and keep polling for completion
+        setPendingRenders((prev) =>
+          prev.includes(short.id) ? prev : [...prev, short.id]
+        );
+        pendingRendersRef.current = [...pendingRendersRef.current, short.id];
+        startPolling();
+      }
+    } catch (e) {
+      console.warn("Failed to queue render job:", e);
+    }
+  };
 
   const isCompleted = project?.status === "COMPLETED";
   const isFailed = project?.status === "FAILED";
@@ -455,9 +544,11 @@ export default function ProjectAnalysisPage() {
 
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                     {displayShorts.map((short) => {
+                      const isCleanUrl = (u?: string | null) =>
+                        Boolean(u && u.startsWith("http") && !u.includes("mock-supabase-storage.local"));
                       const sourceUrl =
-                        short.videoUrl ||
-                        project.signedUrl ||
+                        (isCleanUrl(short.videoUrl) ? short.videoUrl : null) ||
+                        (isCleanUrl(project.signedUrl) ? project.signedUrl : null) ||
                         "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4";
                       const clipCaptions = Array.isArray(short.captions)
                         ? (short.captions as { start: number; end: number; text: string }[])
@@ -504,6 +595,51 @@ export default function ProjectAnalysisPage() {
                                 {short.whyBestReason || short.hookReason}
                               </p>
                             )}
+
+                            {/* Render & Download Button — queues Inngest job, no blocking API call */}
+                            {(() => {
+                              const isRenderReady =
+                                short.renderStatus === "READY" && !!short.renderedVideoUrl;
+                              const isRenderBusy =
+                                short.renderStatus === "QUEUED" ||
+                                short.renderStatus === "RENDERING" ||
+                                pendingRenders.includes(short.id);
+                              const isRenderFailed = short.renderStatus === "FAILED";
+
+                              if (isRenderBusy) {
+                                return (
+                                  <button
+                                    type="button"
+                                    disabled
+                                    className="w-full mt-2.5 py-2 px-3 rounded-lg bg-[#161718] border border-[#23252a] text-[#8a8f98] font-semibold text-xs flex items-center justify-center gap-2 cursor-not-allowed"
+                                  >
+                                    <Loader2 className="w-3.5 h-3.5 animate-spin text-[#e4f222]" />
+                                    <span>Rendering HD 9:16 MP4…</span>
+                                  </button>
+                                );
+                              }
+
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDownloadShort(short)}
+                                  className={`w-full mt-2.5 py-2 px-3 rounded-lg font-semibold text-xs flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] cursor-pointer ${
+                                    isRenderReady || !isRenderFailed
+                                      ? "bg-[#e4f222] hover:bg-[#e4f222]/90 text-[#08090a] shadow-[0_0_14px_rgba(228,242,34,0.25)]"
+                                      : "bg-[#161718] border border-[#eb5757]/50 text-[#eb5757] hover:bg-[#eb5757]/10"
+                                  }`}
+                                >
+                                  <Download className="w-3.5 h-3.5" />
+                                  <span>
+                                    {isRenderReady
+                                      ? `Download HD MP4 (${Math.round(short.durationSec)}s)`
+                                      : isRenderFailed
+                                        ? "Retry Render (last attempt failed)"
+                                        : `Render & Download HD MP4 (${Math.round(short.durationSec)}s)`}
+                                  </span>
+                                </button>
+                              );
+                            })()}
                           </div>
                         </div>
                       );

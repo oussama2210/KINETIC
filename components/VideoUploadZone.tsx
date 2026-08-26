@@ -157,19 +157,21 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
   // Handle URL Load
   const handleUrlSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!videoUrlInput.trim()) return;
+    const rawUrl = videoUrlInput.trim();
+    if (!rawUrl) return;
 
     setIsInitialSelecting(true);
     setGeneratedClips(null);
     setProjectId(null);
     setSignedUrl(null);
 
+    const displayName = rawUrl.split("/").pop()?.split("?")[0] || rawUrl.slice(0, 30);
     const videoInfo: UploadedVideoInfo = {
-      name: "Stream: " + videoUrlInput.slice(0, 28) + "...",
-      size: "142.0 MB (Cloud Stream)",
-      duration: "12:30",
-      resolution: "4K UHD (60fps)",
-      url: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4",
+      name: displayName,
+      size: "Remote Video Stream",
+      duration: "04:00",
+      resolution: "HD (Cloud Stream)",
+      url: rawUrl,
       type: "video/mp4",
     };
 
@@ -211,26 +213,42 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
     setTimeout(() => setCopiedSignedUrl(false), 2000);
   };
 
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
   // -------------------------------------------------------------
   // "AI ANALYSE" BUTTON:
-  // 1) Creates Project & dispatches Inngest event via /api/video/process
-  // 2) Uploads raw video file to Supabase Storage
-  // 3) Navigates to the dedicated project page which polls live workflow
-  //    progress (Deepgram transcription -> captions -> viral shorts)
+  // 1) Creates Project & gets signed upload URL via /api/video/process
+  // 2) Uploads raw video file directly to Supabase Storage with live %
+  // 3) ONLY AFTER the upload succeeds, dispatches the Inngest workflow
+  //    via /api/video/dispatch (prevents 400 races on long videos)
+  // 4) Navigates to the project analysis page
   // -------------------------------------------------------------
   const router = useRouter();
+
+  const dispatchInngestWorkflow = async (pid: string) => {
+    const dispatchRes = await fetch("/api/video/dispatch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectId: pid }),
+    });
+    if (!dispatchRes.ok) {
+      const errJson = await dispatchRes.json().catch(() => ({}));
+      throw new Error(errJson.error || "Failed to start AI workflow after upload");
+    }
+  };
 
   const handleAiAnalyse = async () => {
     if (!uploadedVideo || isProcessingWorkflow) return;
 
+    setUploadError(null);
     setIsProcessingWorkflow(true);
-    setWorkflowProgress(10);
+    setWorkflowProgress(5);
     setActiveStepIndex(1);
     setGeneratedClips(null);
-    setCurrentStepMessage("Creating project & dispatching Inngest AI analysis workflow...");
+    setCurrentStepMessage("Initializing project & requesting storage upload signature...");
 
     try {
-      // 1. Create project in Supabase DB + get signed upload URL + trigger Inngest
+      // 1. Create project in Supabase DB + get signed upload URL
       const res = await fetch("/api/video/process", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -238,6 +256,7 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
           fileName: uploadedVideo.name,
           fileSize: uploadedVideo.size,
           duration: uploadedVideo.duration,
+          videoUrl: uploadedVideo.file ? undefined : uploadedVideo.url,
           clipCount,
           captionStyle,
           aspectRatio,
@@ -245,6 +264,11 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
           autoBroll,
         }),
       });
+
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || `Server responded with ${res.status}`);
+      }
 
       const data = await res.json();
       const newProjectId = data.projectId || `prj_${Date.now()}`;
@@ -255,42 +279,97 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
       setProjectId(newProjectId);
       setSignedUrl(newSignedUrl);
 
-      // 2. Upload raw video file directly to Supabase Storage bucket
+      // 2. Upload raw video file directly to Supabase Storage bucket with live progress
       if (uploadedVideo.file && uploadUrl && isLiveStorage) {
-        setCurrentStepMessage("Uploading video to Supabase storage bucket...");
-        setWorkflowProgress(15);
+        setCurrentStepMessage("Uploading video to Supabase storage bucket (0%)...");
+        setWorkflowProgress(10);
 
-        try {
-          const uploadHeaders: Record<string, string> = {
-            "Content-Type": uploadedVideo.type || "video/mp4",
+        const uploadResult = await new Promise<{ success: boolean; error?: string; status?: number }>((resolve) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open("PUT", uploadUrl);
+          xhr.setRequestHeader("Content-Type", uploadedVideo.type || "video/mp4");
+          xhr.setRequestHeader("x-upsert", "true");
+
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+              const pct = Math.round((e.loaded / e.total) * 100);
+              const loadedMb = (e.loaded / (1024 * 1024)).toFixed(1);
+              const totalMb = (e.total / (1024 * 1024)).toFixed(1);
+              // Scale progress 10% -> 90%
+              setWorkflowProgress(10 + Math.round(pct * 0.8));
+              setCurrentStepMessage(`Uploading video to Supabase: ${pct}% (${loadedMb}MB / ${totalMb}MB)...`);
+            }
           };
-          if (data.token) {
-            uploadHeaders["x-upsert"] = "true";
-          }
 
-          const uploadRes = await fetch(uploadUrl, {
-            method: "PUT",
-            headers: uploadHeaders,
-            body: uploadedVideo.file,
-          });
+          xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+              resolve({ success: true, status: xhr.status });
+            } else {
+              let errText = xhr.responseText || "";
+              let isTooLarge = xhr.status === 413;
+              try {
+                const parsed = JSON.parse(errText);
+                errText = parsed.message || parsed.error || errText;
+                // Supabase wraps EntityTooLarge inside an HTTP 400 response
+                if (parsed.code === "EntityTooLarge" || parsed.statusCode === "413") {
+                  isTooLarge = true;
+                }
+              } catch {
+                // ignore
+              }
+              if (isTooLarge || errText.toLowerCase().includes("large") || errText.toLowerCase().includes("limit") || errText.toLowerCase().includes("entity")) {
+                resolve({
+                  success: false,
+                  status: xhr.status,
+                  error: "File size exceeds Supabase Storage limit (Default free limit is 50MB per file). Increase bucket limit in Supabase Dashboard -> Storage -> Settings, or paste a video URL directly.",
+                });
+              } else {
+                resolve({
+                  success: false,
+                  status: xhr.status,
+                  error: `Storage upload failed (${xhr.status}): ${errText || "Check bucket permissions"}`,
+                });
+              }
+            }
+          };
 
-          if (!uploadRes.ok) {
-            console.warn("Storage PUT status:", uploadRes.status);
-          }
-        } catch (uploadErr) {
-          console.warn("Supabase direct upload notice:", uploadErr);
+          xhr.onerror = () => {
+            resolve({
+              success: false,
+              error: "Network error during video upload. Please check your internet connection.",
+            });
+          };
+
+          xhr.send(uploadedVideo.file);
+        });
+
+        if (!uploadResult.success) {
+          setIsProcessingWorkflow(false);
+          setUploadError(uploadResult.error || "Storage upload failed");
+          setCurrentStepMessage("");
+          return;
         }
+
+        setWorkflowProgress(95);
+        console.log("Successfully uploaded raw video to Supabase bucket");
       }
 
-      // 3. Navigate to the dedicated project analysis page for live progress
-      setCurrentStepMessage("Upload complete • Redirecting to AI Analysis workspace...");
+      // 3. Upload is done (or not needed for direct URLs) — NOW start the
+      //    Inngest workflow so it always finds the file in storage.
+      setCurrentStepMessage("Upload complete • Dispatching Inngest AI workflow...");
+      await dispatchInngestWorkflow(newProjectId);
+
+      // 4. Navigate to the dedicated project analysis page for live progress
+      setWorkflowProgress(100);
+      setCurrentStepMessage("Upload 100% complete • Redirecting to AI Analysis workspace...");
       router.push(`/dashboard/project/${newProjectId}`);
       setIsProcessingWorkflow(false);
 
-    } catch (err) {
+    } catch (err: any) {
       console.error("AI Analyse trigger error:", err);
       setIsProcessingWorkflow(false);
-      setCurrentStepMessage("Failed to start AI analysis — please try again.");
+      setUploadError(err.message || "Failed to start AI analysis — please try again.");
+      setCurrentStepMessage("");
     }
   };
 
@@ -588,6 +667,17 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
             </div>
 
             {/* PRIMARY AI ANALYSE BUTTON */}
+            {/* Error Banner */}
+            {uploadError && (
+              <div className="p-3.5 rounded-lg bg-[#eb5757]/10 border border-[#eb5757]/30 text-xs text-[#eb5757] flex items-start gap-2.5">
+                <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                <div className="space-y-1">
+                  <span className="font-semibold block">Upload Failed</span>
+                  <p className="text-[11px] leading-relaxed text-[#d0d6e0]">{uploadError}</p>
+                </div>
+              </div>
+            )}
+
             <div className="pt-2">
               <button
                 type="button"
@@ -598,7 +688,7 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
                 {isProcessingWorkflow ? (
                   <>
                     <RefreshCw className="w-4 h-4 animate-spin text-[#08090a]" />
-                    <span>AI Analysing with Deepgram ({workflowProgress}%)...</span>
+                    <span>Uploading &amp; Analysing ({workflowProgress}%)...</span>
                   </>
                 ) : (
                   <>

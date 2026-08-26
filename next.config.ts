@@ -1,6 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Native-binary packages must NOT be bundled — @ffmpeg-installer/ffmpeg
+  // resolves its platform binary via dynamic require() at runtime, which
+  // webpack cannot statically trace.
+  serverExternalPackages: ["@ffmpeg-installer/ffmpeg", "fluent-ffmpeg"],
+
   // Remote patterns for video thumbnails, avatars, and cloud media
   images: {
     remotePatterns: [

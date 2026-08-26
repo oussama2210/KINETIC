@@ -25,16 +25,14 @@ export function getSupabaseConfig() {
 
 /**
  * Generate a signed upload URL using Supabase Storage REST API
- * (Or public upload URL if bucket is public)
  */
 export async function getSupabaseUploadUrl(
   path: string,
   bucketName: string = defaultBucket
-): Promise<{ uploadUrl: string; storagePath: string; bucket: string; isLiveStorage: boolean; token?: string }> {
+): Promise<{ uploadUrl: string; storagePath: string; bucket: string; isLiveStorage: boolean; token?: string; apiKey?: string }> {
   const { url, serviceKey, anonKey, isConfigured } = getSupabaseConfig();
 
   if (!isConfigured) {
-    // Fallback simulation URL when Supabase credentials are not set yet
     return {
       uploadUrl: `https://mock-supabase-storage.local/${bucketName}/${path}`,
       storagePath: path,
@@ -47,7 +45,6 @@ export async function getSupabaseUploadUrl(
   const sanitizedPath = path.replace(/^\/+/, "");
 
   try {
-    // Request signed upload URL from Supabase Storage API
     const response = await fetch(`${url}/storage/v1/object/upload/sign/${bucketName}/${sanitizedPath}`, {
       method: "POST",
       headers: {
@@ -60,21 +57,25 @@ export async function getSupabaseUploadUrl(
 
     if (response.ok) {
       const data = await response.json();
-      const signedUploadUrl = `${url}/storage/v1${data.url}`;
+      const rawUrl = data.url || "";
+      const signedUploadUrl = rawUrl.startsWith("/storage/v1")
+        ? `${url}${rawUrl}`
+        : `${url}/storage/v1${rawUrl.startsWith("/") ? "" : "/"}${rawUrl}`;
       return {
         uploadUrl: signedUploadUrl,
         token: data.token,
         storagePath: sanitizedPath,
         bucket: bucketName,
         isLiveStorage: true,
+        apiKey,
       };
     } else {
-      // Fallback to direct REST upload endpoint: POST /storage/v1/object/:bucket/:path
       return {
         uploadUrl: `${url}/storage/v1/object/${bucketName}/${sanitizedPath}`,
         storagePath: sanitizedPath,
         bucket: bucketName,
         isLiveStorage: true,
+        apiKey,
       };
     }
   } catch (err) {
@@ -84,18 +85,24 @@ export async function getSupabaseUploadUrl(
       storagePath: sanitizedPath,
       bucket: bucketName,
       isLiveStorage: true,
+      apiKey,
     };
   }
 }
 
 /**
- * Generate a signed read URL for private video playback, or public URL for public buckets
+ * Generate a signed read URL for private video playback, or authenticated URL for private buckets
  */
 export async function getSupabaseReadUrl(
   path: string,
   bucketName: string = defaultBucket,
   expiresInSeconds: number = 86400 // 24 hours
 ): Promise<string> {
+  // If path is already a full URL (e.g. pasted remote link or sample), return directly
+  if (path.startsWith("http://") || path.startsWith("https://")) {
+    return path;
+  }
+
   const { url, serviceKey, anonKey, isConfigured } = getSupabaseConfig();
 
   if (!isConfigured) {
@@ -118,14 +125,52 @@ export async function getSupabaseReadUrl(
 
     if (response.ok) {
       const data = await response.json();
-      return `${url}/storage/v1${data.signedURL || data.url}`;
+      const signedPath = data.signedURL || data.url || "";
+      if (signedPath.startsWith("http://") || signedPath.startsWith("https://")) {
+        return signedPath;
+      }
+      if (signedPath.startsWith("/storage/v1")) {
+        return `${url}${signedPath}`;
+      }
+      return `${url}/storage/v1${signedPath.startsWith("/") ? "" : "/"}${signedPath}`;
     }
   } catch (err) {
     console.warn("Error generating Supabase signed read URL:", err);
   }
 
-  // Fallback to public URL format
-  return `${url}/storage/v1/object/public/${bucketName}/${sanitizedPath}`;
+  // Fallback to authenticated endpoint for private buckets
+  return `${url}/storage/v1/object/authenticated/${bucketName}/${sanitizedPath}`;
+}
+
+/**
+ * Download a file buffer directly from Supabase Storage using server credentials
+ */
+export async function downloadSupabaseBuffer(
+  path: string,
+  bucketName: string = defaultBucket
+): Promise<Buffer | null> {
+  const { url, serviceKey, anonKey, isConfigured } = getSupabaseConfig();
+  if (!isConfigured) return null;
+
+  const apiKey = serviceKey || anonKey;
+  const sanitizedPath = path.replace(/^\/+/, "");
+
+  try {
+    const res = await fetch(`${url}/storage/v1/object/authenticated/${bucketName}/${sanitizedPath}`, {
+      headers: {
+        apikey: apiKey,
+        Authorization: `Bearer ${apiKey}`,
+      },
+    });
+    if (res.ok) {
+      const ab = await res.arrayBuffer();
+      return Buffer.from(ab);
+    }
+  } catch {
+    // continue
+  }
+
+  return null;
 }
 
 /**
@@ -160,12 +205,25 @@ export async function uploadBufferToSupabase(
         Authorization: `Bearer ${apiKey}`,
         "x-upsert": "true",
       },
-      body: buffer,
+      body: new Uint8Array(buffer),
     });
 
     if (!response.ok) {
       const errText = await response.text();
-      throw new Error(`Supabase upload failed: ${response.status} - ${errText}`);
+      let detail = errText || `HTTP ${response.status}`;
+      try {
+        const parsed = JSON.parse(errText);
+        detail = parsed.message || parsed.error || detail;
+        // Supabase wraps the 413 "Payload too large" inside an HTTP 400 body
+        if (parsed.code === "EntityTooLarge" || parsed.statusCode === "413") {
+          detail =
+            "File exceeds the Supabase Storage bucket's per-file size limit. " +
+            "Raise the limit in Supabase Dashboard → Storage → your bucket → Settings (file size limit).";
+        }
+      } catch {
+        // keep raw text
+      }
+      throw new Error(`Supabase upload failed (${response.status}): ${detail}`);
     }
 
     const publicUrl = `${url}/storage/v1/object/public/${bucketName}/${sanitizedPath}`;

@@ -97,6 +97,9 @@ model GeneratedShort {
   viralityScore     Int      @default(85)           // legacy score support
   videoUrl          String?                         // video source playback URL
   status            String   @default("SELECTED")   // SELECTED, READY, COMPLETED
+  renderStatus      String   @default("NOT_REQUESTED") // NOT_REQUESTED, QUEUED, RENDERING, READY, FAILED
+  renderedVideoUrl  String?                         // signed URL of the FFmpeg-rendered HD 9:16 MP4
+  renderError       String?                         // failure reason when renderStatus = FAILED
   createdAt         DateTime @default(now())
 
   @@index([projectId])
