@@ -25,13 +25,13 @@ export function Hero({ onScrollToStudio }: HeroProps) {
 
         {/* Display Headline */}
         <h1 className="text-4xl sm:text-6xl md:text-7xl font-[510] tracking-[-0.025em] text-[#ffffff] leading-[1.04] mb-6">
-          Generate AI video. <br className="hidden sm:inline" />
-          Auto-publish everywhere.
+          Turn any idea into <span className="text-[#e4f222]">viral video</span>. <br className="hidden sm:inline" />
+          Publish everywhere in one click.
         </h1>
 
         {/* Subtitle */}
         <p className="text-base sm:text-lg text-[#8a8f98] max-w-[680px] leading-relaxed font-normal mb-8">
-          The studio-grade generative video engine built for creators and brands. Render photorealistic 4K clips with 60fps temporal lock, then auto-reframe, caption, and broadcast to <span className="text-[#ffffff]">TikTok, Instagram Reels, YouTube Shorts, and X</span> in one click.
+          KINETIC is the all-in-one platform for AI video creation and social distribution. Generate photorealistic 4K clips with cinematic camera control, then auto-reframe, caption, and schedule to <span className="text-[#ffffff]">TikTok, Instagram Reels, YouTube Shorts, and X</span> — no editing software required.
         </p>
 
         {/* Action Buttons */}

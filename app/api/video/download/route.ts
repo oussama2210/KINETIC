@@ -16,9 +16,20 @@ export const dynamic = "force-dynamic";
 
 const ALLOWED_HOST_PATTERN = /\.supabase\.co$/i;
 
-function sanitizeFileName(name: string): string {
-  const cleaned = name.replace(/[^a-zA-Z0-9_\-\u0600-\u06FF ]/g, "_").slice(0, 80);
-  return `${cleaned || "short"}.mp4`;
+/**
+ * Build a Content-Disposition value that is safe for ASCII and non-ASCII
+ * titles (RFC 5987 `filename*` encoding), so the saved file keeps its
+ * real name even with Arabic/Unicode characters.
+ */
+function contentDispositionValue(name: string): string {
+  const clean = (name || "short").slice(0, 80);
+  // The legacy `filename` parameter MUST be ASCII (HTTP header ByteString),
+  // so strip every non-ASCII character here. The full Unicode name is carried
+  // safely in the RFC 5987 `filename*` parameter instead.
+  const ascii = clean.replace(/[^a-zA-Z0-9_\- ]/g, "_").replace(/\s+/g, "_") || "short";
+  const fallback = `${ascii}.mp4`;
+  const encoded = encodeURIComponent(`${clean}.mp4`);
+  return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
 }
 
 export async function GET(req: NextRequest) {
@@ -69,25 +80,45 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Server-side fetch (HTTP/1.1 via undici — immune to the QUIC bug)
-    const upstream = await fetch(parsed.toString());
+    // Forward any Range header so the browser can download in chunks and
+    // resume interrupted downloads instead of restarting the whole file.
+    // This is the main speed win for large HD MP4s.
+    const range = req.headers.get("range");
+    const upstreamHeaders: Record<string, string> = {};
+    if (range) upstreamHeaders["Range"] = range;
 
-    if (!upstream.ok || !upstream.body) {
+    // Server-side fetch (HTTP/1.1 via undici — immune to the QUIC bug)
+    const upstream = await fetch(parsed.toString(), {
+      headers: upstreamHeaders,
+      // Don't cache upstream so fresh bytes always come back
+    });
+
+    if (!upstream.ok && upstream.status !== 206) {
       return NextResponse.json(
         { error: `Storage returned ${upstream.status}` },
         { status: 502 }
       );
     }
 
-    const fileName = sanitizeFileName(short.title);
+    const fileName = contentDispositionValue(short.title);
     const headers = new Headers();
-    headers.set("Content-Type", "video/mp4");
-    headers.set("Content-Disposition", `attachment; filename="${fileName}"`);
+    headers.set("Content-Type", upstream.headers.get("content-type") || "video/mp4");
+    headers.set("Content-Disposition", fileName);
+    // Advertise that we (and the upstream) support range/resume
+    headers.set("Accept-Ranges", "bytes");
     const len = upstream.headers.get("content-length");
     if (len) headers.set("Content-Length", len);
+    const contentRange = upstream.headers.get("content-range");
+    if (contentRange) headers.set("Content-Range", contentRange);
+    // Let edge/CDN cache completed (non-range) responses briefly for repeats
+    if (!range) headers.set("Cache-Control", "public, max-age=300");
 
-    // Stream bytes straight through — nothing buffered in memory
-    return new NextResponse(upstream.body, { status: 200, headers });
+    // Stream bytes straight through — nothing buffered in memory.
+    // Status 206 when serving a partial range, 200 otherwise.
+    return new NextResponse(upstream.body, {
+      status: upstream.status === 206 ? 206 : 200,
+      headers,
+    });
   } catch (error) {
     console.error("[Download API Error]:", error);
     return NextResponse.json(

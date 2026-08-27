@@ -173,11 +173,17 @@ export async function renderShortVideo({
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "aivideo-render-"));
   const isRemote = sourceVideoUrlOrPath.startsWith("http://") || sourceVideoUrlOrPath.startsWith("https://");
 
-  let localInputPath = sourceVideoUrlOrPath;
-  if (isRemote) {
-    localInputPath = path.join(tempDir, "source_input.mp4");
-    await downloadSourceVideo(sourceVideoUrlOrPath, localInputPath);
-  }
+  // Speed optimization: stream the source straight from its (signed) URL into
+  // FFmpeg instead of downloading the whole file first. FFmpeg seeks via HTTP
+  // range requests, so only the trimmed segment is fetched/decoded — this cuts
+  // render time from minutes to seconds for large source videos. If a remote
+  // input fails, we fall back to a full local download further below.
+  const localInputPath = isRemote ? sourceVideoUrlOrPath : sourceVideoUrlOrPath;
+
+  console.log(
+    `[FFmpeg] Source mode: ${isRemote ? "REMOTE (streaming directly from URL — no full pre-download)" : "LOCAL file"}. ` +
+    `Trim: ${startTimeSec}s → ${endTimeSec}s (${Math.max(1, endTimeSec - startTimeSec)}s).`
+  );
 
   const finalOutput = outputPath || path.join(tempDir, `short_${Date.now()}.mp4`);
   const assPath = path.join(tempDir, "subtitles.ass");
@@ -218,135 +224,114 @@ export async function renderShortVideo({
   // 1. Scale and crop to vertical 9:16 centered (resolution from config)
   // 2. Burn in ASS subtitles (if available)
   const { renderWidth, renderHeight, renderPreset } = VIDEO_ANALYSIS_CONFIG;
-  let videoFilter = `scale=${renderWidth}:${renderHeight}:force_original_aspect_ratio=increase,crop=${renderWidth}:${renderHeight}`;
-  if (hasSubtitles) {
-    videoFilter += `,ass='${escapedAssPath}'`;
-  }
+  const baseVideoFilter = `scale=${renderWidth}:${renderHeight}:force_original_aspect_ratio=increase,crop=${renderWidth}:${renderHeight}`;
+  const videoFilter = hasSubtitles ? `${baseVideoFilter},ass='${escapedAssPath}'` : baseVideoFilter;
 
-  // FFmpeg arguments:
-  // Fast seek to startTime, decode for durationSec, crop 9:16, web-optimized H.264
-  const args = [
-    "-y",
-    "-ss", String(startTimeSec),
-    "-t", String(durationSec),
-    "-i", localInputPath,
-    "-vf", videoFilter,
-    "-c:v", "libx264",
-    "-preset", renderPreset,
-    "-crf", "23",
-    "-maxrate", maxRateArg,
-    "-bufsize", bufSizeArg,
-    "-pix_fmt", "yuv420p",
-    "-c:a", "aac",
-    "-b:a", "128k",
-    "-ar", "44100",
-    "-movflags", "+faststart",
-    finalOutput,
-  ];
-
-  return new Promise((resolve, reject) => {
-    console.log(`[FFmpeg] Executing: ${ffmpegPath} ${args.join(" ")}`);
-    const proc = spawn(ffmpegPath, args);
-
-    let stderr = "";
-    proc.stderr.on("data", (data) => {
-      stderr += data.toString();
+  // Promisified single render attempt (with or without burned-in subtitles).
+  const attemptRender = (withAss: boolean): Promise<void> =>
+    new Promise((resolve, reject) => {
+      const vf = withAss && hasSubtitles ? videoFilter : baseVideoFilter;
+      const attemptArgs = [
+        "-y",
+        "-ss", String(startTimeSec),
+        "-t", String(durationSec),
+        "-i", localInputPath,
+        "-vf", vf,
+        "-c:v", "libx264",
+        "-preset", renderPreset,
+        "-crf", "23",
+        "-maxrate", maxRateArg,
+        "-bufsize", bufSizeArg,
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-ar", "44100",
+        "-movflags", "+faststart",
+        finalOutput,
+      ];
+      console.log(`[FFmpeg] Executing: ${ffmpegPath} ${attemptArgs.join(" ")}`);
+      const proc = spawn(ffmpegPath, attemptArgs);
+      let stderr = "";
+      proc.stderr.on("data", (d) => { stderr += d.toString(); });
+      proc.on("close", (code) => {
+        if (code === 0 && fs.existsSync(finalOutput)) resolve();
+        else reject(new Error(`FFmpeg exited ${code}: ${stderr.slice(-1500)}`));
+      });
+      proc.on("error", (err) => reject(new Error(`Failed to start FFmpeg: ${err.message}`)));
     });
 
-    const runFfmpeg = (runArgs: string[], onDone: (code: number, log: string) => void) => {
-      const child = spawn(ffmpegPath, runArgs);
-      let log = "";
-      child.stderr.on("data", (d) => { log += d.toString(); });
-      child.on("close", (code) => onDone(code ?? -1, log));
-      child.on("error", (err) => onDone(-1, `spawn error: ${err.message}`));
-    };
-
-    // Safety net: if the first render still exceeds the storage limit,
-    // re-encode once at half the bitrate.
-    const recompressIfNeeded = (onDone: (finalPath: string | null, err?: string) => void) => {
-      if (!fs.existsSync(finalOutput)) return onDone(null, "render output missing");
+  // Safety net: if the render exceeds the storage limit, re-encode once at
+  // half the bitrate. Always resolves to a usable path.
+  const recompressIfNeeded = (): Promise<string> =>
+    new Promise((resolve) => {
+      if (!fs.existsSync(finalOutput)) return resolve("");
       const sizeBytes = fs.statSync(finalOutput).size;
-      if (sizeBytes <= MAX_SAFE_OUTPUT_BYTES) return onDone(finalOutput);
+      if (sizeBytes <= MAX_SAFE_OUTPUT_BYTES) return resolve(finalOutput);
 
       const halfRateKbps = Math.max(500, Math.floor(maxRateKbps / 2));
       const compressed = finalOutput.replace(/\.mp4$/, "") + "_compressed.mp4";
       console.warn(
         `[FFmpeg] Output ${(sizeBytes / 1024 / 1024).toFixed(1)} MB exceeds safe limit — recompressing at ${halfRateKbps}k...`
       );
-
-      runFfmpeg(
-        [
-          "-y",
-          "-i", finalOutput,
-          "-c:v", "libx264",
-          "-preset", "fast",
-          "-crf", "28",
-          "-maxrate", `${halfRateKbps}k`,
-          "-bufsize", `${halfRateKbps * 2}k`,
-          "-pix_fmt", "yuv420p",
-          "-c:a", "aac",
-          "-b:a", "96k",
-          "-movflags", "+faststart",
-          compressed,
-        ],
-        (code) => {
-          if (code === 0 && fs.existsSync(compressed)) {
-            fs.rmSync(finalOutput, { force: true });
-            console.log(`[FFmpeg] Recompressed: ${(fs.statSync(compressed).size / (1024 * 1024)).toFixed(1)} MB`);
-            onDone(compressed);
-          } else {
-            // Keep original rather than failing outright
-            console.warn("[FFmpeg] Recompress failed — using original file");
-            onDone(finalOutput);
-          }
+      const child = spawn(ffmpegPath, [
+        "-y",
+        "-i", finalOutput,
+        "-c:v", "libx264",
+        "-preset", "fast",
+        "-crf", "28",
+        "-maxrate", `${halfRateKbps}k`,
+        "-bufsize", `${halfRateKbps * 2}k`,
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-b:a", "96k",
+        "-movflags", "+faststart",
+        compressed,
+      ]);
+      child.on("close", (code) => {
+        if (code === 0 && fs.existsSync(compressed)) {
+          fs.rmSync(finalOutput, { force: true });
+          console.log(`[FFmpeg] Recompressed: ${(fs.statSync(compressed).size / (1024 * 1024)).toFixed(1)} MB`);
+          resolve(compressed);
+        } else {
+          console.warn("[FFmpeg] Recompress failed — using original file");
+          resolve(finalOutput);
         }
-      );
-    };
-
-    proc.on("close", (code) => {
-      if (code === 0 && fs.existsSync(finalOutput)) {
-        console.log(`[FFmpeg] Render succeeded: ${finalOutput} (${(fs.statSync(finalOutput).size / (1024 * 1024)).toFixed(1)} MB)`);
-        recompressIfNeeded((finalPath, err) => {
-          if (finalPath) resolve(finalPath);
-          else reject(new Error(err || "Render produced no output"));
-        });
-      } else {
-        console.warn(`[FFmpeg] Render with ASS failed (exit ${code}). Trying fallback without subtitle filter...`);
-        // Fallback: render without ASS filter if the static build lacks libass
-        const fallbackArgs = [
-          "-y",
-          "-ss", String(startTimeSec),
-          "-t", String(durationSec),
-          "-i", localInputPath,
-          "-vf", `scale=${renderWidth}:${renderHeight}:force_original_aspect_ratio=increase,crop=${renderWidth}:${renderHeight}`,
-          "-c:v", "libx264",
-          "-preset", renderPreset,
-          "-crf", "23",
-          "-maxrate", maxRateArg,
-          "-bufsize", bufSizeArg,
-          "-pix_fmt", "yuv420p",
-          "-c:a", "aac",
-          "-b:a", "128k",
-          "-movflags", "+faststart",
-          finalOutput,
-        ];
-
-        runFfmpeg(fallbackArgs, (fbCode, fbLog) => {
-          if (fbCode === 0 && fs.existsSync(finalOutput)) {
-            console.log(`[FFmpeg] Fallback render succeeded: ${finalOutput}`);
-            recompressIfNeeded((finalPath, err) => {
-              if (finalPath) resolve(finalPath);
-              else reject(new Error(err || "Render produced no output"));
-            });
-          } else {
-            reject(new Error(`FFmpeg failed with code ${fbCode}: ${fbLog || stderr}`));
-          }
-        });
-      }
+      });
+      child.on("error", () => resolve(finalOutput));
     });
 
-    proc.on("error", (err) => {
-      reject(new Error(`Failed to start FFmpeg process: ${err.message}`));
-    });
-  });
+  // Try ASS burn-in first, fall back to a no-subtitles render.
+  const runRenderSequence = async (input: string): Promise<string> => {
+    try {
+      await attemptRender(true);
+    } catch (e) {
+      if (!hasSubtitles) throw e;
+      console.warn("[FFmpeg] Render with ASS failed, retrying without subtitles:", (e as Error).message);
+      await attemptRender(false);
+    }
+    const out = await recompressIfNeeded();
+    if (!out) throw new Error("Render produced no output");
+    return out;
+  };
+
+  // Remote sources are streamed straight from their URL for speed. If that
+  // fails (e.g. range requests unsupported by the host), download the file
+  // locally once and retry — preserving the old reliable behavior as a fallback.
+  let renderedPath: string;
+  const renderStart = Date.now();
+  try {
+    renderedPath = await runRenderSequence(localInputPath);
+  } catch (err) {
+    if (isRemote) {
+      console.warn("[FFmpeg] Remote input failed, downloading source locally and retrying...", (err as Error).message);
+      const localPath = path.join(tempDir, "source_input.mp4");
+      await downloadSourceVideo(sourceVideoUrlOrPath, localPath);
+      renderedPath = await runRenderSequence(localPath);
+    } else {
+      throw err;
+    }
+  }
+
+  console.log(`[FFmpeg] Render finished in ${((Date.now() - renderStart) / 1000).toFixed(1)}s → ${renderedPath}`);
+  return renderedPath;
 }

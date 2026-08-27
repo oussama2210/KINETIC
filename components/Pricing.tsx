@@ -17,10 +17,10 @@ export function Pricing() {
             <span>TRANSPARENT COMPUTE</span>
           </div>
           <h2 className="section-title text-[#ffffff]">
-            Predictable GPU compute + Social distribution.
+            Pricing that scales with your content.
           </h2>
           <p className="text-sm text-[#8a8f98]">
-            Generate 4K clips and auto-publish across TikTok, Reels, Shorts, X, and LinkedIn without limits.
+            Start free, then pay only for the compute you use. Every plan includes AI video generation and one-click multi-platform publishing.
           </p>
 
           {/* Billing Interval Toggle */}

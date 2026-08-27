@@ -20,7 +20,7 @@ export function Footer() {
               <span className="text-sm font-medium text-[#ffffff] tracking-tight">KINETIC</span>
             </div>
             <p className="text-xs text-[#8a8f98] max-w-sm leading-relaxed">
-              Midnight precision instrument for generative video engineering &amp; multi-social auto-publishing. 4K temporal coherence at 60fps.
+              The all-in-one platform for AI video creation and social distribution. Generate, edit, and publish viral-ready video from a single workspace.
             </p>
             <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded bg-[#0f1011] border border-[#23252a] text-[11px] font-mono text-[#d0d6e0]">
               <span className="pulse-dot"></span>
