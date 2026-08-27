@@ -45,6 +45,7 @@ export async function POST(req: NextRequest) {
         title: true,
         renderStatus: true,
         renderedVideoUrl: true,
+        renderUpdatedAt: true,
       },
     });
 
@@ -65,8 +66,19 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Already queued/running — don't double-send the event
-    if (short.renderStatus === "QUEUED" || short.renderStatus === "RENDERING") {
+    // Stuck-run detection: QUEUED/RENDERING is only honored while fresh.
+    // If the workflow died (crash, upload 413, restart), re-queue after 5 min
+    // instead of blocking the button forever.
+    const STALE_AFTER_MS = 5 * 60 * 1000;
+    const isStale =
+      (short.renderStatus === "QUEUED" || short.renderStatus === "RENDERING") &&
+      (!short.renderUpdatedAt ||
+        Date.now() - new Date(short.renderUpdatedAt).getTime() > STALE_AFTER_MS);
+
+    if (
+      !isStale &&
+      (short.renderStatus === "QUEUED" || short.renderStatus === "RENDERING")
+    ) {
       return NextResponse.json({
         success: true,
         shortId,
@@ -82,7 +94,7 @@ export async function POST(req: NextRequest) {
 
     await prisma.generatedShort.update({
       where: { id: shortId },
-      data: { renderStatus: "QUEUED", renderError: null },
+      data: { renderStatus: "QUEUED", renderError: null, renderUpdatedAt: new Date() },
     });
 
     console.log(`[Export API] Queued Inngest render for short "${short.title}" (${shortId})`);

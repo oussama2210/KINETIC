@@ -45,6 +45,7 @@ export const renderShortWorkflow = inngest.createFunction(
           data: {
             renderStatus: "FAILED",
             renderError: error?.message || "Render failed after retries",
+            renderUpdatedAt: new Date(),
           },
         });
       } catch (e) {
@@ -66,7 +67,11 @@ export const renderShortWorkflow = inngest.createFunction(
 
       await prisma.generatedShort.update({
         where: { id: shortId },
-        data: { renderStatus: "RENDERING", renderError: null },
+        data: {
+          renderStatus: "RENDERING",
+          renderError: null,
+          renderUpdatedAt: new Date(),
+        },
       });
 
       return {
@@ -179,6 +184,7 @@ export const renderShortWorkflow = inngest.createFunction(
           renderStatus: "READY",
           renderedVideoUrl: uploadResult.url,
           renderError: null,
+          renderUpdatedAt: new Date(),
         },
       });
     });

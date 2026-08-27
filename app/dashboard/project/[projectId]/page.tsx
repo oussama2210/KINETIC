@@ -95,6 +95,18 @@ export default function ProjectAnalysisPage() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollCountRef = useRef(0);
 
+  const triggerShortDownload = React.useCallback((shortId: string) => {
+    // Streams through our own server (/api/video/download), which sets
+    // Content-Disposition: attachment and bypasses the browser↔Supabase
+    // QUIC bug (net::ERR_QUIC_PROTOCOL_ERROR) entirely — Node fetches
+    // from storage over HTTP/1.1 and relays bytes to the browser locally.
+    const link = document.createElement("a");
+    link.href = `/api/video/download?shortId=${encodeURIComponent(shortId)}`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  }, []);
+
   const stopPolling = React.useCallback(() => {
     setIsPolling(false);
     if (pollRef.current) {
@@ -118,6 +130,27 @@ export default function ProjectAnalysisPage() {
         setProject(data.project);
 
         const shorts: GeneratedShortData[] = data.project.generatedShorts || [];
+
+        // Auto-download any pending render that just became READY
+        if (pendingRendersRef.current.length > 0) {
+          const finished = shorts.filter(
+            (s) =>
+              pendingRendersRef.current.includes(s.id) &&
+              s.renderStatus === "READY" &&
+              s.renderedVideoUrl
+          );
+          if (finished.length > 0) {
+            const done = new Set(finished.map((s) => s.id));
+            pendingRendersRef.current = pendingRendersRef.current.filter(
+              (id) => !done.has(id)
+            );
+            setPendingRenders([...pendingRendersRef.current]);
+            for (const s of finished) {
+              triggerShortDownload(s.id);
+            }
+          }
+        }
+
         const busyShorts =
           pendingRendersRef.current.length > 0 ||
           shorts.some(
@@ -148,7 +181,7 @@ export default function ProjectAnalysisPage() {
 
     tick();
     pollRef.current = setInterval(tick, 2000);
-  }, [projectId, stopPolling]);
+  }, [projectId, stopPolling, triggerShortDownload]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -157,34 +190,7 @@ export default function ProjectAnalysisPage() {
       stopPolling();
       pollCountRef.current = 0;
     };
-  }, [projectId, startPolling, stopPolling]);
-
-  const triggerDirectDownload = (targetUrl: string, fileName: string) => {
-    // Browsers IGNORE the <a download> attribute for cross-origin URLs, so for
-    // Supabase Storage links we pass Supabase's native `?download=` param —
-    // the server then sends Content-Disposition: attachment and the file
-    // downloads directly from storage (nothing proxied, no Vercel timeout).
-    let href = targetUrl;
-    if (/supabase\.(co|com)/i.test(targetUrl)) {
-      try {
-        const url = new URL(targetUrl);
-        url.searchParams.set("download", fileName);
-        href = url.toString();
-      } catch {
-        const sep = targetUrl.includes("?") ? "&" : "?";
-        href = `${targetUrl}${sep}download=${encodeURIComponent(fileName)}`;
-      }
-    }
-
-    const link = document.createElement("a");
-    link.href = href;
-    link.download = fileName;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-  };
+  }, [projectId, startPolling, stopPolling, triggerShortDownload]);
 
   /**
    * Download button handler.
@@ -198,7 +204,7 @@ export default function ProjectAnalysisPage() {
 
     // Already rendered — download the real HD file directly
     if (short.renderStatus === "READY" && short.renderedVideoUrl) {
-      triggerDirectDownload(short.renderedVideoUrl, fileName);
+      triggerShortDownload(short.id);
       return;
     }
 
@@ -219,7 +225,7 @@ export default function ProjectAnalysisPage() {
 
       if (data?.success && data.downloadUrl) {
         // Render was already done server-side — grab it right away
-        triggerDirectDownload(data.downloadUrl, fileName);
+        triggerShortDownload(short.id);
         return;
       }
 

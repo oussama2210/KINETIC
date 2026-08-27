@@ -7,6 +7,7 @@ import path from "path";
 import fs from "fs";
 import os from "os";
 import { spawn } from "child_process";
+import { VIDEO_ANALYSIS_CONFIG } from "@/config/video-analysis";
 
 // Try resolving the static FFmpeg binary
 let ffmpegPath = "ffmpeg";
@@ -144,14 +145,19 @@ async function downloadSourceVideo(url: string, targetPath: string): Promise<voi
       fs.writeFileSync(targetPath, Buffer.from(arrayBuffer));
       console.log(`[FFmpeg] Downloaded ${(arrayBuffer.byteLength / 1024 / 1024).toFixed(1)} MB to ${targetPath}`);
       return;
-    } catch (err: any) {
+    } catch (err) {
+      const msg = errMessage(err);
       if (attempt === MAX_RETRIES) {
-        throw new Error(`Failed to fetch source video after ${MAX_RETRIES} attempts: ${err.message}`);
+        throw new Error(`Failed to fetch source video after ${MAX_RETRIES} attempts: ${msg}`);
       }
-      console.warn(`[FFmpeg] Download attempt ${attempt} error: ${err.message} — retrying...`);
+      console.warn(`[FFmpeg] Download attempt ${attempt} error: ${msg} — retrying...`);
       await new Promise((r) => setTimeout(r, attempt * 2000));
     }
   }
+}
+
+function errMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 /**
@@ -178,10 +184,12 @@ export async function renderShortVideo({
 
   const durationSec = Math.max(1, endTimeSec - startTimeSec);
 
-  // Size-aware bitrate cap: keep the rendered MP4 under the storage bucket's
-  // per-file limit (Supabase default = 50MB). Target 40MB total, reserve room
-  // for 128k AAC audio. Short clips keep the full 4Mbps quality ceiling.
-  const TARGET_OUTPUT_BYTES = 40 * 1024 * 1024;
+  // Size-aware bitrate cap: keep the rendered MP4 safely under the storage
+  // bucket's per-file limit (Supabase free tier rejects large objects with
+  // 413 EntityTooLarge). Target 30MB total, reserve room for 128k AAC audio.
+  // Short clips keep the full 4Mbps quality ceiling.
+  const TARGET_OUTPUT_BYTES = 30 * 1024 * 1024;
+  const MAX_SAFE_OUTPUT_BYTES = 45 * 1024 * 1024;
   const maxRateKbps = Math.max(
     700,
     Math.min(
@@ -207,9 +215,10 @@ export async function renderShortVideo({
   const escapedAssPath = assPath.replace(/\\/g, "/").replace(/:/g, "\\:");
 
   // Build FFmpeg video filter:
-  // 1. Scale and crop to 1080x1920 (9:16 vertical centered)
+  // 1. Scale and crop to vertical 9:16 centered (resolution from config)
   // 2. Burn in ASS subtitles (if available)
-  let videoFilter = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920";
+  const { renderWidth, renderHeight, renderPreset } = VIDEO_ANALYSIS_CONFIG;
+  let videoFilter = `scale=${renderWidth}:${renderHeight}:force_original_aspect_ratio=increase,crop=${renderWidth}:${renderHeight}`;
   if (hasSubtitles) {
     videoFilter += `,ass='${escapedAssPath}'`;
   }
@@ -223,7 +232,7 @@ export async function renderShortVideo({
     "-i", localInputPath,
     "-vf", videoFilter,
     "-c:v", "libx264",
-    "-preset", "fast",
+    "-preset", renderPreset,
     "-crf", "23",
     "-maxrate", maxRateArg,
     "-bufsize", bufSizeArg,
@@ -244,10 +253,63 @@ export async function renderShortVideo({
       stderr += data.toString();
     });
 
+    const runFfmpeg = (runArgs: string[], onDone: (code: number, log: string) => void) => {
+      const child = spawn(ffmpegPath, runArgs);
+      let log = "";
+      child.stderr.on("data", (d) => { log += d.toString(); });
+      child.on("close", (code) => onDone(code ?? -1, log));
+      child.on("error", (err) => onDone(-1, `spawn error: ${err.message}`));
+    };
+
+    // Safety net: if the first render still exceeds the storage limit,
+    // re-encode once at half the bitrate.
+    const recompressIfNeeded = (onDone: (finalPath: string | null, err?: string) => void) => {
+      if (!fs.existsSync(finalOutput)) return onDone(null, "render output missing");
+      const sizeBytes = fs.statSync(finalOutput).size;
+      if (sizeBytes <= MAX_SAFE_OUTPUT_BYTES) return onDone(finalOutput);
+
+      const halfRateKbps = Math.max(500, Math.floor(maxRateKbps / 2));
+      const compressed = finalOutput.replace(/\.mp4$/, "") + "_compressed.mp4";
+      console.warn(
+        `[FFmpeg] Output ${(sizeBytes / 1024 / 1024).toFixed(1)} MB exceeds safe limit — recompressing at ${halfRateKbps}k...`
+      );
+
+      runFfmpeg(
+        [
+          "-y",
+          "-i", finalOutput,
+          "-c:v", "libx264",
+          "-preset", "fast",
+          "-crf", "28",
+          "-maxrate", `${halfRateKbps}k`,
+          "-bufsize", `${halfRateKbps * 2}k`,
+          "-pix_fmt", "yuv420p",
+          "-c:a", "aac",
+          "-b:a", "96k",
+          "-movflags", "+faststart",
+          compressed,
+        ],
+        (code) => {
+          if (code === 0 && fs.existsSync(compressed)) {
+            fs.rmSync(finalOutput, { force: true });
+            console.log(`[FFmpeg] Recompressed: ${(fs.statSync(compressed).size / (1024 * 1024)).toFixed(1)} MB`);
+            onDone(compressed);
+          } else {
+            // Keep original rather than failing outright
+            console.warn("[FFmpeg] Recompress failed — using original file");
+            onDone(finalOutput);
+          }
+        }
+      );
+    };
+
     proc.on("close", (code) => {
       if (code === 0 && fs.existsSync(finalOutput)) {
         console.log(`[FFmpeg] Render succeeded: ${finalOutput} (${(fs.statSync(finalOutput).size / (1024 * 1024)).toFixed(1)} MB)`);
-        resolve(finalOutput);
+        recompressIfNeeded((finalPath, err) => {
+          if (finalPath) resolve(finalPath);
+          else reject(new Error(err || "Render produced no output"));
+        });
       } else {
         console.warn(`[FFmpeg] Render with ASS failed (exit ${code}). Trying fallback without subtitle filter...`);
         // Fallback: render without ASS filter if the static build lacks libass
@@ -256,9 +318,9 @@ export async function renderShortVideo({
           "-ss", String(startTimeSec),
           "-t", String(durationSec),
           "-i", localInputPath,
-          "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
+          "-vf", `scale=${renderWidth}:${renderHeight}:force_original_aspect_ratio=increase,crop=${renderWidth}:${renderHeight}`,
           "-c:v", "libx264",
-          "-preset", "fast",
+          "-preset", renderPreset,
           "-crf", "23",
           "-maxrate", maxRateArg,
           "-bufsize", bufSizeArg,
@@ -269,15 +331,15 @@ export async function renderShortVideo({
           finalOutput,
         ];
 
-        const fallbackProc = spawn(ffmpegPath, fallbackArgs);
-        let fallbackStderr = "";
-        fallbackProc.stderr.on("data", (d) => { fallbackStderr += d.toString(); });
-        fallbackProc.on("close", (fbCode) => {
+        runFfmpeg(fallbackArgs, (fbCode, fbLog) => {
           if (fbCode === 0 && fs.existsSync(finalOutput)) {
             console.log(`[FFmpeg] Fallback render succeeded: ${finalOutput}`);
-            resolve(finalOutput);
+            recompressIfNeeded((finalPath, err) => {
+              if (finalPath) resolve(finalPath);
+              else reject(new Error(err || "Render produced no output"));
+            });
           } else {
-            reject(new Error(`FFmpeg failed with code ${fbCode}: ${fallbackStderr || stderr}`));
+            reject(new Error(`FFmpeg failed with code ${fbCode}: ${fbLog || stderr}`));
           }
         });
       }
