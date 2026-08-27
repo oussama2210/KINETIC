@@ -16,52 +16,45 @@ export function CommandPalette({ isOpen, onClose, onSelectAction }: CommandPalet
 
   const actions = [
     {
-      id: "gen-cyberpunk",
-      category: "Presets",
-      title: "Load Preset: Cyberpunk Tokyo Rain (35mm Anamorphic)",
+      id: "upload",
+      category: "Get started",
+      title: "Upload a video to repurpose",
       icon: <Sparkles className="w-4 h-4 text-[#e4f222]" />,
       action: () => {
-        onSelectAction("load-preset", "cyberpunk");
+        window.location.href = "/dashboard";
         onClose();
       }
     },
     {
-      id: "gen-liquid",
-      category: "Presets",
-      title: "Load Preset: Molten Gold 120fps Super Slow-Mo",
-      icon: <Sparkles className="w-4 h-4 text-[#02b8cc]" />,
+      id: "how",
+      category: "Product",
+      title: "See how it works",
+      icon: <Video className="w-4 h-4 text-[#02b8cc]" />,
       action: () => {
-        onSelectAction("load-preset", "liquid");
+        const el = document.getElementById("how");
+        if (el) el.scrollIntoView({ behavior: "smooth" });
         onClose();
       }
     },
     {
-      id: "gen-space",
-      category: "Presets",
-      title: "Load Preset: Exoplanet Ruin & Bioluminescent Aurora",
-      icon: <Sparkles className="w-4 h-4 text-[#8b5cf6]" />,
-      action: () => {
-        onSelectAction("load-preset", "space");
-        onClose();
-      }
-    },
-    {
-      id: "cam-orbit",
-      category: "Camera Trajectory",
-      title: "Set Camera: 3D Orbit Arc (60 FPS)",
+      id: "showcase",
+      category: "Product",
+      title: "Browse example shorts",
       icon: <Video className="w-4 h-4 text-[#27a644]" />,
       action: () => {
-        onSelectAction("set-camera", "Orbit Arc (3D)");
+        const el = document.getElementById("showcase");
+        if (el) el.scrollIntoView({ behavior: "smooth" });
         onClose();
       }
     },
     {
-      id: "cam-dolly",
-      category: "Camera Trajectory",
-      title: "Set Camera: Dolly Zoom Vertigo",
-      icon: <Video className="w-4 h-4 text-[#27a644]" />,
+      id: "distribution",
+      category: "Product",
+      title: "Connect social accounts",
+      icon: <Terminal className="w-4 h-4 text-[#8b5cf6]" />,
       action: () => {
-        onSelectAction("set-camera", "Dolly Zoom (Vertigo)");
+        const el = document.getElementById("distribution");
+        if (el) el.scrollIntoView({ behavior: "smooth" });
         onClose();
       }
     },
@@ -97,7 +90,7 @@ export function CommandPalette({ isOpen, onClose, onSelectAction }: CommandPalet
           <Search className="w-4 h-4 text-[#8a8f98]" />
           <input
             type="text"
-            placeholder="Type a command or scene prompt... (e.g. Cyberpunk, Camera, SDK)"
+            placeholder="Type a command... (e.g. Upload, How it works, API)"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             autoFocus

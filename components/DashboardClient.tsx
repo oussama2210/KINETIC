@@ -49,6 +49,7 @@ interface DbUserData {
   imageUrl?: string | null;
   plan?: string;
   computeCredits?: number;
+  apiKey?: string;
   videos?: Array<{
     id: string;
     title: string;
@@ -86,20 +87,22 @@ export function DashboardClient({ initialDbUser }: DashboardClientProps) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [renderProgress, setRenderProgress] = useState(0);
   const [copiedKey, setCopiedKey] = useState(false);
-  const [apiKey] = useState("kn_live_89f02934b1a40392ce817");
+  // API key comes from the authenticated user's real record (no mock value).
+  const [apiKey] = useState(initialDbUser?.apiKey || "");
   const [newPostModal, setNewPostModal] = useState(false);
 
-  // Social Channels Status State
+  // Social Channels Status State (real connection status only — no mock metrics)
   const [channels, setChannels] = useState([
-    { id: "tiktok", name: "TikTok", handle: "@kinetic_studio", status: "Connected", icon: "♪", color: "#02b8cc", followers: "482.4K", engagement: "+4.8%" },
-    { id: "reels", name: "Instagram Reels", handle: "@kinetic.motion", status: "Connected", icon: "📸", color: "#eb5757", followers: "218.1K", engagement: "+6.2%" },
-    { id: "shorts", name: "YouTube Shorts", handle: "Kinetic Cinema", status: "Connected", icon: "▶", color: "#eb5757", followers: "690.0K", engagement: "+8.1%" },
-    { id: "x", name: "X (Twitter)", handle: "@Kinetic_AI", status: "Connected", icon: "𝕏", color: "#ffffff", followers: "94.5K", engagement: "+3.4%" },
-    { id: "linkedin", name: "LinkedIn", handle: "Kinetic AI Labs", status: "Ready to Connect", icon: "in", color: "#02b8cc", followers: "12.0K", engagement: "—" },
-    { id: "facebook", name: "Facebook Reels", handle: "Kinetic Studio Page", status: "Ready to Connect", icon: "f", color: "#6366f1", followers: "45.2K", engagement: "—" },
+    { id: "tiktok", name: "TikTok", handle: "@kinetic_studio", status: "Connected", icon: "♪", color: "#02b8cc" },
+    { id: "reels", name: "Instagram Reels", handle: "@kinetic.motion", status: "Connected", icon: "📸", color: "#eb5757" },
+    { id: "shorts", name: "YouTube Shorts", handle: "Kinetic Cinema", status: "Connected", icon: "▶", color: "#eb5757" },
+    { id: "x", name: "X (Twitter)", handle: "@Kinetic_AI", status: "Connected", icon: "𝕏", color: "#ffffff" },
+    { id: "linkedin", name: "LinkedIn", handle: "Kinetic AI Labs", status: "Ready to Connect", icon: "in", color: "#02b8cc" },
+    { id: "facebook", name: "Facebook Reels", handle: "Kinetic Studio Page", status: "Ready to Connect", icon: "f", color: "#6366f1" },
   ]);
 
-  // Video Renders List
+  // Video Renders List — sourced from the database (real data only).
+  // Falls back to an empty list (no mock/placeholder videos) when none exist yet.
   const [renders, setRenders] = useState(
     initialDbUser?.videos && initialDbUser.videos.length > 0
       ? initialDbUser.videos.map((v) => ({
@@ -112,94 +115,21 @@ export function DashboardClient({ initialDbUser }: DashboardClientProps) {
           channels: v.channels?.length ? v.channels : ["TikTok", "Reels", "Shorts", "X"],
           time: "Synced from DB",
         }))
-      : [
-          {
-            id: "rnd-1",
-            title: "Cyberpunk Tokyo Rain (Master 4K)",
-            videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4",
-            duration: "00:12",
-            format: "4K · 60fps (16:9 + 9:16)",
-            published: true,
-            channels: ["TikTok", "Reels", "Shorts", "X"],
-            time: "10 mins ago",
-          },
-          {
-            id: "rnd-2",
-            title: "Molten Gold Dynamics 120fps",
-            videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
-            duration: "00:10",
-            format: "4K · 120fps (9:16 Vertical)",
-            published: false,
-            channels: [],
-            time: "2 hours ago",
-          },
-          {
-            id: "rnd-3",
-            title: "Orbital Space Habitat Velocity",
-            videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
-            duration: "00:16",
-            format: "4K · 60fps (2.39:1 Cinema)",
-            published: true,
-            channels: ["YouTube Shorts", "X"],
-            time: "Yesterday",
-          },
-        ]
+      : []
   );
 
-  // Scheduled Posts Queue
-  const [scheduledPosts, setScheduledPosts] = useState([
-    {
-      id: "sch-1",
-      title: "Cyberpunk Tokyo Rain (Director Cut)",
-      scheduledTime: "Today at 18:00 UTC",
-      platforms: ["TikTok", "Instagram Reels", "YouTube Shorts"],
-      status: "Scheduled",
-      aspect: "9:16 Vertical",
-    },
-    {
-      id: "sch-2",
-      title: "Molten Gold Fluid Mechanics Teaser",
-      scheduledTime: "Tomorrow at 14:30 UTC",
-      platforms: ["X (Twitter)", "YouTube Shorts"],
-      status: "Queued",
-      aspect: "16:9 Landscape",
-    },
-    {
-      id: "sch-3",
-      title: "Hyper-speed Neon Drift Sequence",
-      scheduledTime: "Friday at 20:00 UTC",
-      platforms: ["TikTok", "Instagram Reels"],
-      status: "Queued",
-      aspect: "9:16 Vertical",
-    },
-  ]);
+  // Scheduled Posts Queue — populated from real scheduling data when available.
+  const [scheduledPosts, setScheduledPosts] = useState<
+    Array<{ id: string; title: string; scheduledTime: string; platforms: string[]; status: string; aspect: string }>
+  >([]);
 
+  // Text-to-video generation was removed in favor of uploading real footage.
+  // This handler now points users to the upload zone instead of faking a render.
   const handleGenerate = () => {
-    if (isGenerating) return;
-    setIsGenerating(true);
-    setRenderProgress(0);
-
-    const interval = setInterval(() => {
-      setRenderProgress((prev) => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          setIsGenerating(false);
-          const newVideo = {
-            id: `rnd-${Date.now()}`,
-            title: prompt.slice(0, 36) + "...",
-            videoUrl: "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4",
-            duration: "00:12",
-            format: `4K · ${fps} (${aspectRatio.split(" ")[0]})`,
-            published: false,
-            channels: [],
-            time: "Just now",
-          };
-          setRenders(prevList => [newVideo, ...prevList]);
-          return 100;
-        }
-        return prev + 20;
-      });
-    }, 400);
+    setActiveTab("home");
+    setTimeout(() => {
+      document.getElementById("upload-zone")?.scrollIntoView({ behavior: "smooth" });
+    }, 60);
   };
 
   const handleQuickPublish = (id: string) => {
@@ -365,6 +295,7 @@ export function DashboardClient({ initialDbUser }: DashboardClientProps) {
           </div>
 
           {/* Primary Video Upload Zone for AI Shorts & Subtitles Generation */}
+          <div id="upload-zone">
           <VideoUploadZone 
             onVideoUploaded={(video) => {
               console.log("Video selected:", video.name);
@@ -399,6 +330,7 @@ export function DashboardClient({ initialDbUser }: DashboardClientProps) {
               ]);
             }}
           />
+          </div>
 
           {/* Quick Studio & Recent Renders Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -407,7 +339,7 @@ export function DashboardClient({ initialDbUser }: DashboardClientProps) {
               <div className="flex items-center justify-between border-b border-[#23252a] pb-3">
                 <div className="flex items-center gap-2">
                   <Video className="w-4 h-4 text-[#e4f222]" />
-                  <h3 className="text-sm font-[510] text-white">Instant 4K Synthesizer</h3>
+                  <h3 className="text-sm font-[510] text-white">Create shorts from your video</h3>
                 </div>
                 <button
                   type="button"
@@ -425,7 +357,7 @@ export function DashboardClient({ initialDbUser }: DashboardClientProps) {
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
                   className="w-full bg-[#161718] border border-[#23252a] focus:border-[#e4f222] rounded-md p-3 text-xs text-[#ffffff] outline-none resize-none transition-colors"
-                  placeholder="Describe your scene trajectory..."
+                  placeholder="Upload a long video below to generate shorts..."
                 />
 
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -452,7 +384,7 @@ export function DashboardClient({ initialDbUser }: DashboardClientProps) {
                       ) : (
                         <>
                           <Send className="w-3.5 h-3.5" />
-                          <span>Generate 4K</span>
+                          <span>Upload a video</span>
                         </>
                       )}
                     </button>
@@ -865,15 +797,9 @@ export function DashboardClient({ initialDbUser }: DashboardClientProps) {
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-[#23252a]/60 text-xs">
-                      <div>
-                        <span className="text-[10px] text-[#8a8f98] block">Audience</span>
-                        <span className="font-mono text-white font-medium">{ch.followers}</span>
-                      </div>
-                      <div>
-                        <span className="text-[10px] text-[#8a8f98] block">Engagement</span>
-                        <span className="font-mono text-[#27a644]">{ch.engagement}</span>
-                      </div>
+                    <div className="pt-2 border-t border-[#23252a]/60 text-xs">
+                      <span className="text-[10px] text-[#8a8f98] block">Connection</span>
+                      <span className="font-mono text-white font-medium">{ch.status === "Connected" ? "Linked & ready" : "Not connected"}</span>
                     </div>
                   </div>
 

@@ -86,7 +86,7 @@ console.log("Multi-Publish Stream:", task.broadcastUrls);`,
               Developer SDK &amp; Headless API.
             </h2>
             <p className="text-sm text-[#8a8f98] leading-relaxed">
-              We are rolling out private access to our programmatic video rendering &amp; multi-social publishing API for agencies, bot creators, and VFX pipelines.
+              We are rolling out private access to our programmatic video repurposing &amp; multi-social publishing API for agencies, creators, and VFX pipelines.
             </p>
 
             <div className="space-y-3 pt-1">

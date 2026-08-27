@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Link from "next/link";
 import { ArrowRight, ChevronRight, Share2, Sparkles } from "lucide-react";
 
 interface HeroProps {
@@ -25,39 +26,39 @@ export function Hero({ onScrollToStudio }: HeroProps) {
 
         {/* Display Headline */}
         <h1 className="text-4xl sm:text-6xl md:text-7xl font-[510] tracking-[-0.025em] text-[#ffffff] leading-[1.04] mb-6">
-          Turn any idea into <span className="text-[#e4f222]">viral video</span>. <br className="hidden sm:inline" />
-          Publish everywhere in one click.
+          Upload one long video. <br className="hidden sm:inline" />
+          Get a feed of <span className="text-[#e4f222]">viral shorts</span>.
         </h1>
 
         {/* Subtitle */}
         <p className="text-base sm:text-lg text-[#8a8f98] max-w-[680px] leading-relaxed font-normal mb-8">
-          KINETIC is the all-in-one platform for AI video creation and social distribution. Generate photorealistic 4K clips with cinematic camera control, then auto-reframe, caption, and schedule to <span className="text-[#ffffff]">TikTok, Instagram Reels, YouTube Shorts, and X</span> — no editing software required.
+          KINETIC turns your long-form videos into polished, captioned 9:16 shorts. We find the best moments, auto-reframe and transcribe them, then publish straight to <span className="text-[#ffffff]">TikTok, Instagram Reels, YouTube Shorts, and X</span> — no editing required.
         </p>
 
         {/* Action Buttons */}
         <div className="flex flex-col sm:flex-row items-center gap-3 w-full sm:w-auto justify-center mb-14">
-          <button 
-            onClick={onScrollToStudio}
+          <Link
+            href="/dashboard"
             className="btn-acid-lime w-full sm:w-auto px-6 py-3 text-sm cursor-pointer"
           >
-            <span>Launch Studio &amp; Auto-Post</span>
+            <span>Upload your video</span>
             <ArrowRight className="w-4 h-4" />
-          </button>
-          
+          </Link>
+           
           <a 
-            href="#distribution" 
+            href="#how" 
             className="btn-ghost w-full sm:w-auto px-5 py-3 text-sm flex items-center gap-2"
           >
             <Share2 className="w-3.5 h-3.5 text-[#02b8cc]" />
-            <span>Connect Social Accounts</span>
+            <span>See how it works</span>
           </a>
         </div>
 
         {/* Performance Metrics Bar */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-8 py-4 px-6 rounded-xl bg-[#0f1011]/80 border border-[#23252a] w-full max-w-[780px]">
           <div className="flex flex-col items-center">
-            <span className="text-base sm:text-lg font-mono font-medium text-[#ffffff]">4K UHD</span>
-            <span className="text-[11px] text-[#8a8f98]">Zero-Drift Diffusion</span>
+            <span className="text-base sm:text-lg font-mono font-medium text-[#ffffff]">Any length</span>
+            <span className="text-[11px] text-[#8a8f98]">Long video in, shorts out</span>
           </div>
           <div className="flex flex-col items-center border-l-0 md:border-l border-[#23252a]">
             <span className="text-base sm:text-lg font-mono font-medium text-[#e4f222]">5 Channels</span>

@@ -35,10 +35,10 @@ export function Architecture() {
             <span>ARCHITECTURE</span>
           </div>
           <h2 className="section-title text-[#ffffff] mb-4">
-            Built like a high-precision camera rig.
+            Built to repurpose long video at scale.
           </h2>
           <p className="text-base text-[#8a8f98] leading-relaxed">
-            Eliminate morphing artifacts and wandering subjects. Kinetic couples spatial diffusion latents with deterministic 3D motion splines.
+            We transcribe your footage, score every moment for impact, and cut reframed, captioned 9:16 shorts with frame-accurate timing.
           </p>
         </div>
 

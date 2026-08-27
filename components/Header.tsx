@@ -53,7 +53,7 @@ export function Header({ onOpenPalette }: HeaderProps) {
 
         {/* Navigation Links */}
         <nav className="hidden md:flex items-center gap-7 text-[13px] text-[#d0d6e0]">
-          <a href="#studio" className="hover:text-[#ffffff] transition-colors">Studio</a>
+          <a href="#how" className="hover:text-[#ffffff] transition-colors">How it works</a>
           <a href="#distribution" className="hover:text-[#ffffff] text-[#e4f222] transition-colors">Auto-Publish</a>
           <a href="#features" className="hover:text-[#ffffff] transition-colors">Architecture</a>
           <a href="#showcase" className="hover:text-[#ffffff] transition-colors">Showcase</a>
@@ -124,11 +124,11 @@ export function Header({ onOpenPalette }: HeaderProps) {
       {mobileMenuOpen && (
         <div className="md:hidden bg-[#0f1011] border-b border-[#23252a] px-6 py-4 space-y-3">
           <a 
-            href="#studio" 
+            href="#how" 
             onClick={() => setMobileMenuOpen(false)}
             className="block text-sm text-[#d0d6e0] hover:text-white py-1"
           >
-            Studio
+            How it works
           </a>
           <a 
             href="#distribution" 

@@ -3,7 +3,6 @@
 import React, { useState, useEffect } from "react";
 import { Header } from "@/components/Header";
 import { Hero } from "@/components/Hero";
-import { StudioWorkspace } from "@/components/StudioWorkspace";
 import { SocialDistribution } from "@/components/SocialDistribution";
 import { SocialProof } from "@/components/SocialProof";
 import { Architecture } from "@/components/Architecture";
@@ -12,12 +11,10 @@ import { ApiSection } from "@/components/ApiSection";
 import { Pricing } from "@/components/Pricing";
 import { Footer } from "@/components/Footer";
 import { CommandPalette } from "@/components/CommandPalette";
-import { ArrowRight, Film, Share2 } from "lucide-react";
+import { ArrowRight, Film, Share2, Upload, Wand2, Send } from "lucide-react";
 import Link from "next/link";
 export default function Home() {
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
-  const [activePreset, setActivePreset] = useState<string | undefined>(undefined);
-  const [activeCamera, setActiveCamera] = useState<string | undefined>(undefined);
 
   // Global Keyboard Shortcuts (⌘K / Ctrl+K)
   useEffect(() => {
@@ -31,26 +28,19 @@ export default function Home() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  const scrollToStudio = () => {
-    const el = document.getElementById("studio");
+  const scrollToHow = () => {
+    const el = document.getElementById("how");
     if (el) {
       el.scrollIntoView({ behavior: "smooth" });
     }
   };
 
   const handleSelectAction = (action: string, payload?: any) => {
-    if (action === "load-preset") {
-      setActivePreset(payload);
-      scrollToStudio();
-    } else if (action === "set-camera") {
-      setActiveCamera(payload);
-      scrollToStudio();
-    }
+    scrollToHow();
   };
 
   const handleSelectPromptFromGallery = (promptText: string, sceneKey: string) => {
-    setActivePreset(sceneKey);
-    scrollToStudio();
+    scrollToHow();
   };
 
   return (
@@ -70,13 +60,66 @@ export default function Home() {
 
       <main>
         {/* Hero Section */}
-        <Hero onScrollToStudio={scrollToStudio} />
+        <Hero onScrollToStudio={scrollToHow} />
 
-        {/* Interactive Studio Workspace */}
-        <StudioWorkspace
-          externalPreset={activePreset}
-          externalCamera={activeCamera}
-        />
+      {/* How it works — upload long video, get shorts */}
+      <section className="py-20 border-t border-[#161718] bg-[#08090a]" id="how">
+        <div className="max-w-[1200px] mx-auto px-6">
+          <div className="max-w-[700px] mb-14">
+            <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded bg-[#161718] border border-[#23252a] text-[11px] font-mono text-[#e4f222] mb-4">
+              <span>HOW IT WORKS</span>
+            </div>
+            <h2 className="text-3xl sm:text-4xl font-[510] text-[#ffffff] tracking-tight mb-4">
+              One upload. A feed of ready-to-post shorts.
+            </h2>
+            <p className="text-sm text-[#8a8f98] leading-relaxed">
+              No prompts, no editing timeline. Drop in a long-form video and KINETIC does the repurposing for you.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="hairline-card p-7 bg-[#0f1011] border border-[#23252a] rounded-xl space-y-4">
+              <div className="w-10 h-10 rounded-lg bg-[#161718] border border-[#23252a] flex items-center justify-center">
+                <Upload className="w-5 h-5 text-[#e4f222]" />
+              </div>
+              <h3 className="text-base font-[510] text-white">1 · Upload your video</h3>
+              <p className="text-xs text-[#8a8f98] leading-relaxed">
+                Drag in any long-form recording — a webinar, podcast, tutorial, or gameplay. We handle 4K and long files.
+              </p>
+            </div>
+
+            <div className="hairline-card p-7 bg-[#0f1011] border border-[#23252a] rounded-xl space-y-4">
+              <div className="w-10 h-10 rounded-lg bg-[#161718] border border-[#23252a] flex items-center justify-center">
+                <Wand2 className="w-5 h-5 text-[#02b8cc]" />
+              </div>
+              <h3 className="text-base font-[510] text-white">2 · AI finds the moments</h3>
+              <p className="text-xs text-[#8a8f98] leading-relaxed">
+                We transcribe the audio, score each moment for virality, and auto-reframe, caption, and trim into 9:16 shorts.
+              </p>
+            </div>
+
+            <div className="hairline-card p-7 bg-[#0f1011] border border-[#23252a] rounded-xl space-y-4">
+              <div className="w-10 h-10 rounded-lg bg-[#161718] border border-[#23252a] flex items-center justify-center">
+                <Send className="w-5 h-5 text-[#27a644]" />
+              </div>
+              <h3 className="text-base font-[510] text-white">3 · Publish everywhere</h3>
+              <p className="text-xs text-[#8a8f98] leading-relaxed">
+                Review, then publish or schedule to TikTok, Instagram Reels, YouTube Shorts, and X in one click.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-10 flex flex-col sm:flex-row items-center gap-3">
+            <Link href="/dashboard" className="btn-acid-lime px-7 py-3 text-sm cursor-pointer">
+              <span>Start repurposing</span>
+              <ArrowRight className="w-4 h-4" />
+            </Link>
+            <a href="#showcase" className="btn-ghost px-6 py-3 text-sm">
+              <span>See example shorts</span>
+            </a>
+          </div>
+        </div>
+      </section>
 
         {/* Unified Social Media Auto-Publisher Hub */}
         <SocialDistribution />
@@ -106,22 +149,22 @@ export default function Home() {
               </div>
 
               <h2 className="text-3xl sm:text-5xl font-[510] text-[#ffffff] tracking-tight">
-                Generate 4K video. <br className="hidden sm:inline" />
-                Broadcast to every platform in seconds.
+                Upload once. <br className="hidden sm:inline" />
+                Publish the best moments everywhere.
               </h2>
               
               <p className="text-sm sm:text-base text-[#8a8f98] max-w-lg mx-auto leading-relaxed">
-                Connect your TikTok, Instagram Reels, YouTube Shorts, and X accounts to turn text prompts into synchronized viral campaigns automatically.
+                Connect your TikTok, Instagram Reels, YouTube Shorts, and X accounts and we'll turn one long video into a full feed of shorts — trimmed, captioned, and ready to publish.
               </p>
 
               <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
-                <button
-                  onClick={scrollToStudio}
+                <Link
+                  href="/dashboard"
                   className="btn-acid-lime px-8 py-3 text-sm cursor-pointer w-full sm:w-auto"
                 >
-                  <span>Launch Studio &amp; Auto-Post</span>
+                  <span>Upload your video</span>
                   <ArrowRight className="w-4 h-4" />
-                </button>
+                </Link>
                 <a href="#distribution" className="btn-ghost px-6 py-3 text-sm w-full sm:w-auto">
                   <span>Explore Social Integrations</span>
                   <span>→</span>

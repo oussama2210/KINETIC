@@ -78,10 +78,10 @@ export function ShowcaseGallery({ onSelectPrompt }: ShowcaseGalleryProps) {
               <span>CDN VIDEO EXAMPLES</span>
             </div>
             <h2 className="section-title text-[#ffffff] mb-3">
-              Generated footage. Live streaming.
+              Shorts cut from real videos.
             </h2>
             <p className="text-sm text-[#8a8f98]">
-              Hover any video card to stream real footage from our global CDN. Clone prompt seeds and camera settings directly into your Studio session.
+              Example shorts our users made from long-form videos. Every clip is auto-reframed, captioned, and ready to publish.
             </p>
           </div>
 
