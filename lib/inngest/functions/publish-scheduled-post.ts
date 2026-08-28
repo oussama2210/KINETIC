@@ -34,10 +34,14 @@ export interface PublishScheduledPostEventData {
  * - Monitors all scheduled posts in one dashboard
  * - Handles timezone issues consistently
  */
-export const publishScheduledPostWorkflow = inngest.createFunction(
+// NOTE: Inngest's published types require a 3-arg signature, but the installed
+// runtime expects `triggers` inside the options object (2-arg). Cast keeps tsc
+// happy while matching the runtime contract.
+export const publishScheduledPostWorkflow = (inngest.createFunction as any)(
   {
     id: "publish-scheduled-post",
     retries: 3, // Retry up to 3 times if Zernio fails
+    triggers: [{ event: "social/post.scheduled" }],
 
     // Mark as FAILED if all retries exhausted
     onFailure: async ({ event, error }: InngestFailureCtx) => {
@@ -59,7 +63,6 @@ export const publishScheduledPostWorkflow = inngest.createFunction(
       }
     },
   },
-  [{ event: "social/post.scheduled" }],
   async ({ event, step }: InngestHandlerCtx) => {
     const { scheduledPostId } = event.data as PublishScheduledPostEventData;
 

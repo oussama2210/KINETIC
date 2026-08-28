@@ -109,7 +109,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   });
 
   const assContent = header + dialogueLines.join("\n") + "\n";
-  fs.writeFileSync(outputFilePath, assContent, "utf-8");
+  fs.writeFileSync(/* turbopackIgnore: true */ outputFilePath, assContent, "utf-8");
 }
 
 /**
@@ -156,7 +156,7 @@ async function downloadSourceVideo(url: string, targetPath: string): Promise<voi
         continue;
       }
 
-      fs.writeFileSync(targetPath, Buffer.from(arrayBuffer));
+      fs.writeFileSync(/* turbopackIgnore: true */ targetPath, Buffer.from(arrayBuffer));
       console.log(`[FFmpeg] Downloaded ${(arrayBuffer.byteLength / 1024 / 1024).toFixed(1)} MB to ${targetPath}`);
       return;
     } catch (err) {
@@ -184,7 +184,7 @@ export async function renderShortVideo({
   captions = [],
   outputPath,
 }: RenderShortOptions): Promise<string> {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "aivideo-render-"));
+  const tempDir = fs.mkdtempSync(/* turbopackIgnore: true */ path.join(os.tmpdir(), "aivideo-render-"));
   const isRemote = sourceVideoUrlOrPath.startsWith("http://") || sourceVideoUrlOrPath.startsWith("https://");
 
   // Speed optimization: stream the source straight from its (signed) URL into
@@ -225,7 +225,7 @@ export async function renderShortVideo({
   if (captions && captions.length > 0) {
     try {
       generateAssSubtitles(captions, startTimeSec, assPath);
-      hasSubtitles = fs.existsSync(assPath);
+      hasSubtitles = fs.existsSync(/* turbopackIgnore: true */ assPath);
     } catch (e) {
       console.warn("Could not generate ASS subtitles, rendering without captions:", e);
     }
@@ -266,11 +266,11 @@ export async function renderShortVideo({
         finalOutput,
       ];
       console.log(`[FFmpeg] Executing: ${ffmpegPath} ${attemptArgs.join(" ")}`);
-      const proc = spawn(ffmpegPath, attemptArgs);
+      const proc = spawn(/* turbopackIgnore: true */ ffmpegPath, attemptArgs);
       let stderr = "";
       proc.stderr.on("data", (d) => { stderr += d.toString(); });
       proc.on("close", (code) => {
-        if (code === 0 && fs.existsSync(finalOutput)) resolve();
+        if (code === 0 && fs.existsSync(/* turbopackIgnore: true */ finalOutput)) resolve();
         else reject(new Error(`FFmpeg exited ${code}: ${stderr.slice(-1500)}`));
       });
       proc.on("error", (err) => reject(new Error(`Failed to start FFmpeg: ${err.message}`)));
@@ -280,8 +280,8 @@ export async function renderShortVideo({
   // half the bitrate. Always resolves to a usable path.
   const recompressIfNeeded = (): Promise<string> =>
     new Promise((resolve) => {
-      if (!fs.existsSync(finalOutput)) return resolve("");
-      const sizeBytes = fs.statSync(finalOutput).size;
+      if (!fs.existsSync(/* turbopackIgnore: true */ finalOutput)) return resolve("");
+      const sizeBytes = fs.statSync(/* turbopackIgnore: true */ finalOutput).size;
       if (sizeBytes <= MAX_SAFE_OUTPUT_BYTES) return resolve(finalOutput);
 
       const halfRateKbps = Math.max(500, Math.floor(maxRateKbps / 2));
@@ -289,7 +289,7 @@ export async function renderShortVideo({
       console.warn(
         `[FFmpeg] Output ${(sizeBytes / 1024 / 1024).toFixed(1)} MB exceeds safe limit — recompressing at ${halfRateKbps}k...`
       );
-      const child = spawn(ffmpegPath, [
+      const child = spawn(/* turbopackIgnore: true */ ffmpegPath, [
         "-y",
         "-i", finalOutput,
         "-c:v", "libx264",
@@ -304,9 +304,9 @@ export async function renderShortVideo({
         compressed,
       ]);
       child.on("close", (code) => {
-        if (code === 0 && fs.existsSync(compressed)) {
-          fs.rmSync(finalOutput, { force: true });
-          console.log(`[FFmpeg] Recompressed: ${(fs.statSync(compressed).size / (1024 * 1024)).toFixed(1)} MB`);
+        if (code === 0 && fs.existsSync(/* turbopackIgnore: true */ compressed)) {
+          fs.rmSync(/* turbopackIgnore: true */ finalOutput, { force: true });
+          console.log(`[FFmpeg] Recompressed: ${(fs.statSync(/* turbopackIgnore: true */ compressed).size / (1024 * 1024)).toFixed(1)} MB`);
           resolve(compressed);
         } else {
           console.warn("[FFmpeg] Recompress failed — using original file");

@@ -68,12 +68,15 @@ function buildCuesFromPlainText(transcript: string): CaptionCue[] {
   return cues;
 }
 
-export const processVideoWorkflow = inngest.createFunction(
+// NOTE: Inngest's published types require a 3-arg signature, but the installed
+// runtime expects `triggers` inside the options object (2-arg). Cast keeps tsc
+// happy while matching the runtime contract.
+export const processVideoWorkflow = (inngest.createFunction as any)(
   {
     id: "process-uploaded-video",
     retries: 2,
+    triggers: [{ event: "video/process.started" }],
   },
-  [{ event: "video/process.started" }],
   async ({ event, step }: InngestHandlerCtx) => {
     const data = event.data as ProcessVideoEventData;
     const { projectId, userId, s3Key, originalFileName, clipCount, captionStyle, aspectRatio } = data;

@@ -40,10 +40,14 @@ interface CaptionCueLike {
  * Runs entirely inside Inngest so the HTTP layer never blocks — the UI just
  * shows a loading state and polls until renderStatus becomes READY.
  */
-export const renderShortWorkflow = inngest.createFunction(
+// NOTE: Inngest's published types require a 3-arg signature, but the installed
+// runtime expects `triggers` inside the options object (2-arg). Cast keeps tsc
+// happy while matching the runtime contract.
+export const renderShortWorkflow = (inngest.createFunction as any)(
   {
     id: "render-short-video",
     retries: 2,
+    triggers: [{ event: "short/render.requested" }],
     // Mark FAILED when all retries are exhausted so the UI can offer a retry
     onFailure: async ({ event, error }: InngestFailureCtx) => {
       const original = (event.data as { event?: { data?: RenderShortEventData } }).event;
@@ -64,7 +68,6 @@ export const renderShortWorkflow = inngest.createFunction(
       }
     },
   },
-  [{ event: "short/render.requested" }],
   async ({ event, step }: InngestHandlerCtx) => {
     const { shortId } = event.data as RenderShortEventData;
 
@@ -161,7 +164,7 @@ export const renderShortWorkflow = inngest.createFunction(
 
     // Step 4: Upload rendered MP4 to storage
     const uploadResult = await step.run("upload-rendered-short", async () => {
-      const fileBuffer = fs.readFileSync(renderedFilePath);
+      const fileBuffer = fs.readFileSync(/* turbopackIgnore: true */ renderedFilePath);
       const sanitized = shortData.title.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 60);
       const storagePath = `renders/${shortData.projectId}/${sanitized}-${Date.now()}.mp4`;
 
@@ -201,7 +204,7 @@ export const renderShortWorkflow = inngest.createFunction(
     try {
       const parentDir = path.dirname(renderedFilePath);
       if (parentDir.includes("aivideo-render-")) {
-        fs.rmSync(parentDir, { recursive: true, force: true });
+        fs.rmSync(/* turbopackIgnore: true */ parentDir, { recursive: true, force: true });
       }
     } catch (e) {
       console.warn("[Render] temp cleanup warning:", e);
