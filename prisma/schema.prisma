@@ -17,6 +17,7 @@ model User {
   firstName       String?
   lastName        String?
   imageUrl        String?
+  zernioProfileId String?        @map("zernio_profile_id") // Zernio workspace profile id for this user
   plan            String          @default("CREATOR") // CREATOR, STUDIO_PRO, ENTERPRISE
   computeCredits  Int             @default(600)       // GPU minutes
   createdAt       DateTime        @default(now())
@@ -25,6 +26,7 @@ model User {
   videos          Video[]
   projects        Project[]
   socialAccounts  SocialAccount[]
+  scheduledPosts  ScheduledPost[]
 
   @@index([clerkId])
   @@index([email])
@@ -129,12 +131,35 @@ model SocialAccount {
   id              String          @id @default(cuid())
   userId          String
   user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  platform        String          // TIKTOK, REELS, SHORTS, X, LINKEDIN
+  platform        String          // TIKTOK, REELS, SHORTS, X, LINKEDIN, FACEBOOK
   handle          String
+  zernioAccountId String?         @map("zernio_account_id") // Zernio account id used for publishing
+  username        String?         // platform username returned by Zernio on connect
+  avatarUrl       String?         @map("avatar_url")
   connected       Boolean         @default(true)
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
 
   @@unique([userId, platform])
+  @@index([userId])
+}
+
+// A post scheduled or published to social platforms via Zernio.
+model ScheduledPost {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title        String
+  caption      String?
+  mediaUrl     String?  // Zernio-hosted public URL of the uploaded video
+  platforms    String[] @default([]) // our platform ids, e.g. ["TIKTOK","REELS"]
+  accountIds   String   @default("[]") // JSON array of Zernio account ids used
+  zernioPostId String?  @map("zernio_post_id")
+  scheduledFor DateTime?
+  status       String   @default("SCHEDULED") // SCHEDULED, PUBLISHED, FAILED, DRAFT
+  error        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
   @@index([userId])
 }

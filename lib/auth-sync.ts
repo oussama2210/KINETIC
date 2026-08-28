@@ -41,14 +41,6 @@ export async function checkAndSyncUser() {
         imageUrl: imageUrl || null,
         plan: "STUDIO_PRO",
         computeCredits: 600,
-        socialAccounts: {
-          create: [
-            { platform: "TIKTOK", handle: "@kinetic_creator", connected: true },
-            { platform: "REELS", handle: "@kinetic.motion", connected: true },
-            { platform: "SHORTS", handle: "Kinetic Cinema", connected: true },
-            { platform: "X", handle: "@Kinetic_User", connected: true },
-          ],
-        },
         videos: {
           create: [
             {

@@ -11,7 +11,7 @@ export interface CaptionCue {
 }
 
 interface ShortVideoPlayerProps {
-  /** Full original video URL (signed Supabase URL) */
+  /** Full original video URL (signed cloud URL) */
   sourceVideoUrl?: string;
   /** Clip start time in seconds */
   startTimeSec?: number;

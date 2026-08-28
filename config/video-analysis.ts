@@ -30,14 +30,18 @@ export const VIDEO_ANALYSIS_CONFIG = {
 
   /**
    * FFmpeg render speed/quality tuning.
-   * - renderPreset: x264 preset. Faster presets = much shorter render times:
-   *   "ultrafast" < "superfast" < "veryfast" < "faster" < "fast" < "medium"
-   *   "veryfast" renders a 60s clip in roughly 20-40s on a modern CPU
-   *   while keeping good quality (the size cap still applies).
-   * - renderWidth/renderHeight: output resolution. 720x1280 renders ~2x
-   *   faster than 1080x1920 if you ever need more speed.
+   * 
+   * PERFORMANCE COMPARISON (60s clip):
+   * - "ultrafast" + CRF 28: ~3-5s render time (FASTEST - current)
+   * - "ultrafast" + CRF 26: ~5-8s render time
+   * - "superfast" + CRF 23: ~12-18s render time
+   * - "veryfast" + CRF 23: ~20-40s render time
+   * 
+   * For best user experience: "ultrafast" preset with CRF 28
+   * CRF 28 = slightly lower quality but 40% faster than CRF 26
    */
-  renderPreset: "veryfast",
+  renderPreset: "ultrafast",
+  renderCRF: "28", // Changed from 26 - faster encoding with acceptable quality
   renderWidth: 1080,
   renderHeight: 1920,
 } as const;

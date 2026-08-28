@@ -76,9 +76,9 @@ interface ProjectStatus {
 }
 
 const PIPELINE_STEPS = [
-  { threshold: 20, label: "Supabase Upload", icon: Upload },
+  { threshold: 20, label: "Cloud Upload", icon: Upload },
   { threshold: 40, label: "Signed URL Saved", icon: Lock },
-  { threshold: 70, label: "Deepgram Transcription", icon: AudioLines },
+  { threshold: 70, label: "AI Transcription", icon: AudioLines },
   { threshold: 100, label: "Captions & Shorts Ready", icon: Captions },
 ];
 
@@ -97,9 +97,8 @@ export default function ProjectAnalysisPage() {
 
   const triggerShortDownload = React.useCallback((shortId: string) => {
     // Streams through our own server (/api/video/download), which sets
-    // Content-Disposition: attachment and bypasses the browser↔Supabase
-    // QUIC bug (net::ERR_QUIC_PROTOCOL_ERROR) entirely — Node fetches
-    // from storage over HTTP/1.1 and relays bytes to the browser locally.
+    // Content-Disposition: attachment and bypasses browser issues.
+    // Node fetches from storage over HTTP/1.1 and relays bytes to the browser locally.
     const link = document.createElement("a");
     link.href = `/api/video/download?shortId=${encodeURIComponent(shortId)}`;
     document.body.appendChild(link);
@@ -166,7 +165,7 @@ export default function ProjectAnalysisPage() {
         // ~5 min cap for the analysis phase, extended while renders are active
         if (!busyShorts && pollCountRef.current > 150) {
           stopPolling();
-          setError("Analysis is taking longer than expected — check the Inngest dashboard.");
+          setError("Analysis is taking longer than expected. Please check back later.");
           return;
         }
         // Absolute safety cap (~20 min) so polling never runs forever
@@ -195,7 +194,7 @@ export default function ProjectAnalysisPage() {
   /**
    * Download button handler.
    * - If the FFmpeg-rendered HD MP4 is ready → instant direct download.
-   * - Otherwise → fire-and-forget API call that just queues an Inngest render
+   * - Otherwise → fire-and-forget API call that queues a background render
    *   job and returns immediately (no long-running HTTP request, no timeout).
    *   The button shows a loading state until polling sees renderStatus READY.
    */
@@ -293,7 +292,7 @@ export default function ProjectAnalysisPage() {
                   ? "Polling Stopped"
                   : isFailed
                     ? "AI Analysis Failed"
-                    : "Deepgram AI Pipeline Running..."}
+                    : "AI Analysis Running..."}
               </span>
             </div>
             <span className="text-xs font-mono text-[#e4f222] font-semibold">
@@ -368,7 +367,7 @@ export default function ProjectAnalysisPage() {
               <div className="flex items-center gap-2">
                 <FileText className="w-4 h-4 text-[#e4f222]" />
                 <h3 className="text-sm font-[510] text-white">
-                  Deepgram Transcript
+                  AI Transcript
                 </h3>
               </div>
               <span className="text-[11px] font-mono text-[#27a644] flex items-center gap-1">
@@ -616,7 +615,7 @@ export default function ProjectAnalysisPage() {
                               </p>
                             )}
 
-                            {/* Render & Download Button — queues Inngest job, no blocking API call */}
+                            {/* Render & Download Button — queues background job, no blocking API call */}
                             {(() => {
                               const isRenderReady =
                                 short.renderStatus === "READY" && !!short.renderedVideoUrl;

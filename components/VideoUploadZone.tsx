@@ -69,7 +69,7 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
   const [uploadedVideo, setUploadedVideo] = useState<UploadedVideoInfo | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
 
-  // Inggest Workflow Processing States
+  // AI Processing States
   const [isProcessingWorkflow, setIsProcessingWorkflow] = useState(false);
   const [workflowProgress, setWorkflowProgress] = useState(0);
   const [currentStepMessage, setCurrentStepMessage] = useState("");
@@ -217,10 +217,9 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
 
   // -------------------------------------------------------------
   // "AI ANALYSE" BUTTON:
-  // 1) Creates Project & gets signed upload URL via /api/video/process
-  // 2) Uploads raw video file directly to Supabase Storage with live %
-  // 3) ONLY AFTER the upload succeeds, dispatches the Inngest workflow
-  //    via /api/video/dispatch (prevents 400 races on long videos)
+  // 1) Creates Project & gets upload URL
+  // 2) Uploads video with progress tracking
+  // 3) ONLY AFTER upload succeeds, starts AI analysis
   // 4) Navigates to the project analysis page
   // -------------------------------------------------------------
   const router = useRouter();
@@ -248,7 +247,7 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
     setCurrentStepMessage("Initializing project & requesting storage upload signature...");
 
     try {
-      // 1. Create project in Supabase DB + get signed upload URL
+      // 1. Create project in database + get signed upload URL
       const res = await fetch("/api/video/process", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -279,9 +278,9 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
       setProjectId(newProjectId);
       setSignedUrl(newSignedUrl);
 
-      // 2. Upload raw video file directly to Supabase Storage bucket with live progress
+      // 2. Upload video file with progress tracking
       if (uploadedVideo.file && uploadUrl && isLiveStorage) {
-        setCurrentStepMessage("Uploading video to Supabase storage bucket (0%)...");
+        setCurrentStepMessage("Uploading video (0%)...");
         setWorkflowProgress(10);
 
         const uploadResult = await new Promise<{ success: boolean; error?: string; status?: number }>((resolve) => {
@@ -310,7 +309,7 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
               try {
                 const parsed = JSON.parse(errText);
                 errText = parsed.message || parsed.error || errText;
-                // Supabase wraps EntityTooLarge inside an HTTP 400 response
+                // Cloud storage wraps EntityTooLarge inside an HTTP 400 response
                 if (parsed.code === "EntityTooLarge" || parsed.statusCode === "413") {
                   isTooLarge = true;
                 }
@@ -321,7 +320,7 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
                 resolve({
                   success: false,
                   status: xhr.status,
-                  error: "File size exceeds Supabase Storage limit (Default free limit is 50MB per file). Increase bucket limit in Supabase Dashboard -> Storage -> Settings, or paste a video URL directly.",
+                  error: "File too large. Maximum 50MB per file. Please use a smaller video or paste a URL instead.",
                 });
               } else {
                 resolve({
@@ -351,12 +350,12 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
         }
 
         setWorkflowProgress(95);
-        console.log("Successfully uploaded raw video to Supabase bucket");
+        console.log("Successfully uploaded raw video to cloud storage");
       }
 
       // 3. Upload is done (or not needed for direct URLs) — NOW start the
-      //    Inngest workflow so it always finds the file in storage.
-      setCurrentStepMessage("Upload complete • Dispatching Inngest AI workflow...");
+      //    AI workflow so it always finds the file in storage.
+      setCurrentStepMessage("Upload complete • Starting AI analysis...");
       await dispatchInngestWorkflow(newProjectId);
 
       // 4. Navigate to the dedicated project analysis page for live progress
@@ -384,14 +383,14 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-base font-[510] text-[#ffffff] tracking-tight">
-                Upload Long Video &rarr; Inggest Supabase Storage &amp; AI Shorts Pipeline
+                Upload Long Video &rarr; AI Shorts Pipeline
               </h2>
               <span className="text-[10px] font-mono text-[#27a644] bg-[#27a644]/10 border border-[#27a644]/30 px-1.5 py-0.5 rounded">
-                Inggest v4 + Supabase Ready
+                AI Ready
               </span>
             </div>
             <p className="text-xs text-[#8a8f98]">
-              Upload your raw video. When you click <strong>AI Analyse</strong>, the Inngest background function stores the video in your Supabase bucket, transcribes it with Deepgram AI from its signed URL, generates synchronized captions, and outputs 9:16 shorts.
+              Upload your raw video. When you click <strong>AI Analyse</strong>, our AI pipeline transcribes it, generates synchronized captions, and outputs 9:16 shorts optimized for TikTok, Reels, and YouTube Shorts.
             </p>
           </div>
         </div>
@@ -465,7 +464,7 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
                       <span className="text-[#e4f222]">Click to choose video</span> or drag and drop here
                     </p>
                     <p className="text-xs text-[#8a8f98]">
-                      MP4, MOV, WebM, MKV up to 2GB • Inggest + Supabase Storage + PostgreSQL DB
+                      MP4, MOV, WebM, MKV up to 2GB • Cloud Storage Ready
                     </p>
                   </div>
 
@@ -473,15 +472,15 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
                   <div className="flex flex-wrap items-center justify-center gap-2 pt-2 text-[11px] font-mono">
                     <span className="px-2.5 py-1 rounded bg-[#161718] border border-[#23252a] text-[#02b8cc] flex items-center gap-1.5">
                       <Server className="w-3.5 h-3.5" />
-                      <span>Supabase Bucket Storage</span>
+                      <span>Cloud Storage</span>
                     </span>
                     <span className="px-2.5 py-1 rounded bg-[#161718] border border-[#23252a] text-[#27a644] flex items-center gap-1.5">
                       <Database className="w-3.5 h-3.5" />
-                      <span>Supabase DB Auto-Sync</span>
+                      <span>Auto-Sync Database</span>
                     </span>
                     <span className="px-2.5 py-1 rounded bg-[#161718] border border-[#23252a] text-[#e4f222] flex items-center gap-1.5">
                       <Zap className="w-3.5 h-3.5" />
-                      <span>Inggest Workflow Step Engine</span>
+                      <span>AI Processing Engine</span>
                     </span>
                   </div>
                 </>
@@ -550,7 +549,7 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
                     {uploadedVideo.name}
                   </span>
                   <span className="inline-flex items-center gap-1 text-[10px] font-mono text-[#e4f222] bg-[#e4f222]/10 border border-[#e4f222]/30 px-2 py-0.5 rounded">
-                    Ready for Inggest
+                    Ready for Processing
                   </span>
                 </div>
 
@@ -582,11 +581,11 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
               <div className="flex items-center gap-2">
                 <Sliders className="w-4 h-4 text-[#e4f222]" />
                 <h3 className="text-xs font-semibold text-white uppercase tracking-wider font-mono">
-                  Inggest Workflow Directives
+                  AI Processing Options
                 </h3>
               </div>
               <span className="mono-badge text-[10px] text-[#02b8cc]">
-                Supabase Storage + Deepgram AI + Auto Captions
+                AI Transcription + Auto Captions
               </span>
             </div>
 
@@ -693,7 +692,7 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
                 ) : (
                   <>
                     <Sparkles className="w-4 h-4 text-[#08090a]" />
-                    <span>AI Analyse &rarr; Deepgram Transcription + Auto Captions</span>
+                    <span>AI Analyse &rarr; Transcription + Auto Captions</span>
                   </>
                 )}
               </button>
@@ -709,13 +708,13 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
                 <div className="flex items-center gap-2">
                   <div className="w-2 h-2 rounded-full bg-[#e4f222] animate-pulse"></div>
                   <span className="text-xs font-semibold text-white">
-                    Inggest Workflow Status: <strong className="text-[#e4f222]">{isProcessingWorkflow ? "RUNNING" : "COMPLETED"}</strong>
+                    AI Analysis Status: <strong className="text-[#e4f222]">{isProcessingWorkflow ? "PROCESSING" : "COMPLETED"}</strong>
                   </span>
                 </div>
 
                 {projectId && (
                   <div className="flex items-center gap-2 text-[10px] font-mono">
-                    <span className="text-[#8a8f98]">Supabase DB Project:</span>
+                    <span className="text-[#8a8f98]">Project ID:</span>
                     <span className="text-[#02b8cc] bg-[#02b8cc]/10 border border-[#02b8cc]/30 px-2 py-0.5 rounded">
                       {projectId}
                     </span>
@@ -742,7 +741,7 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
                 <div className={`p-2.5 rounded-lg border ${workflowProgress >= 20 ? "bg-[#27a644]/10 border-[#27a644]/30 text-[#27a644]" : "bg-[#161718] border-[#23252a] text-[#8a8f98]"}`}>
                   <div className="flex items-center gap-1.5">
                     {workflowProgress >= 20 ? <Check className="w-3 h-3" /> : <span>1.</span>}
-                    <span>Supabase Upload</span>
+                    <span>Cloud Upload</span>
                   </div>
                 </div>
 
@@ -756,7 +755,7 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
                 <div className={`p-2.5 rounded-lg border ${workflowProgress >= 70 ? "bg-[#27a644]/10 border-[#27a644]/30 text-[#27a644]" : "bg-[#161718] border-[#23252a] text-[#8a8f98]"}`}>
                   <div className="flex items-center gap-1.5">
                     {workflowProgress >= 70 ? <Check className="w-3 h-3" /> : <span>3.</span>}
-                    <span>Deepgram Transcription</span>
+                    <span>AI Transcription</span>
                   </div>
                 </div>
 
@@ -768,7 +767,7 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
                 </div>
               </div>
 
-              {/* Supabase Signed URL Box */}
+              {/* Signed Video URL Box */}
               {signedUrl && (
                 <div className="p-3 rounded-lg bg-[#161718] border border-[#23252a] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs">
                   <div className="flex items-center gap-2 overflow-hidden">
@@ -805,7 +804,7 @@ export function VideoUploadZone({ onVideoUploaded, onGenerateShorts }: VideoUplo
                   </h3>
                 </div>
                 <span className="text-[11px] font-mono text-[#e4f222]">
-                  Supabase DB Synced • Ready to Auto-Publish
+                  Database Synced • Ready to Auto-Publish
                 </span>
               </div>
 

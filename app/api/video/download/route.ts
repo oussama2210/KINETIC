@@ -1,36 +1,18 @@
+/**
+ * GET /api/video/download?shortId=xxx
+ * 
+ * Generates a fresh signed URL and redirects directly to it.
+ * This is much faster than proxying (no server transfer).
+ * 
+ * Signed URLs are valid for 1 hour and downloaded directly from Supabase Storage.
+ */
+
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getSupabaseReadUrl, hasSupabaseConfig } from "@/lib/supabase";
+import { getPresignedReadUrl, hasStorageCredentials } from "@/lib/s3";
 
 export const dynamic = "force-dynamic";
-
-/**
- * Streams a rendered short MP4 through this server with
- * Content-Disposition: attachment so the browser saves it.
- *
- * Why a proxy? Some networks break Chrome's QUIC (HTTP/3) connection to
- * Supabase Storage (net::ERR_QUIC_PROTOCOL_ERROR), which kills direct
- * anchor downloads. Node's server-side fetch uses plain HTTP/1.1 over TCP,
- * so relaying through here always works. Only our own Supabase project
- * host is allowed — this can't be abused as an open proxy.
- */
-
-const ALLOWED_HOST_PATTERN = /\.supabase\.co$/i;
-
-/**
- * Build a Content-Disposition value that is safe for ASCII and non-ASCII
- * titles (RFC 5987 `filename*` encoding), so the saved file keeps its
- * real name even with Arabic/Unicode characters.
- */
-function contentDispositionValue(name: string): string {
-  const clean = (name || "short").slice(0, 80);
-  // The legacy `filename` parameter MUST be ASCII (HTTP header ByteString),
-  // so strip every non-ASCII character here. The full Unicode name is carried
-  // safely in the RFC 5987 `filename*` parameter instead.
-  const ascii = clean.replace(/[^a-zA-Z0-9_\- ]/g, "_").replace(/\s+/g, "_") || "short";
-  const fallback = `${ascii}.mp4`;
-  const encoded = encodeURIComponent(`${clean}.mp4`);
-  return `attachment; filename="${fallback}"; filename*=UTF-8''${encoded}`;
-}
 
 export async function GET(req: NextRequest) {
   try {
@@ -41,13 +23,20 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Missing shortId" }, { status: 400 });
     }
 
+    // Fetch the short from database
     const short = await prisma.generatedShort.findUnique({
       where: { id: shortId },
       select: {
         title: true,
         renderedVideoUrl: true,
         videoUrl: true,
-        project: { select: { signedUrl: true } },
+        project: { 
+          select: { 
+            s3Key: true,
+            s3Bucket: true,
+            signedUrl: true 
+          } 
+        },
       },
     });
 
@@ -55,70 +44,104 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "Short not found" }, { status: 404 });
     }
 
-    // Prefer the FFmpeg-rendered HD file; fall back to source playback URL
-    const targetUrl =
-      short.renderedVideoUrl || short.videoUrl || short.project.signedUrl;
+    // Get the storage key (path in bucket)
+    let storageKey = "";
+    
+    // Priority: renderedVideoUrl (the final FFmpeg output)
+    if (short.renderedVideoUrl) {
+      try {
+        const url = new URL(short.renderedVideoUrl);
+        // Extract key from Supabase URL format:
+        // https://xxx.supabase.co/storage/v1/object/sign/bucket-name/path/to/file.mp4?token=...
+        // https://xxx.supabase.co/storage/v1/object/public/bucket-name/path/to/file.mp4
+        const match = url.pathname.match(/\/storage\/v1\/object\/(?:sign|public)\/[^/]+\/(.+)$/);
+        if (match && match[1]) {
+          storageKey = match[1].split("?")[0]; // Remove query params
+        }
+      } catch (e) {
+        console.warn("[Download] Could not parse renderedVideoUrl:", e);
+      }
+    }
+    
+    // Fallback 1: Try videoUrl
+    if (!storageKey && short.videoUrl) {
+      try {
+        const url = new URL(short.videoUrl);
+        const match = url.pathname.match(/\/storage\/v1\/object\/(?:sign|public)\/[^/]+\/(.+)$/);
+        if (match && match[1]) {
+          storageKey = match[1].split("?")[0];
+        }
+      } catch (e) {
+        console.warn("[Download] Could not parse videoUrl:", e);
+      }
+    }
+    
+    // Fallback 2: Use s3Key directly
+    if (!storageKey && short.project.s3Key) {
+      storageKey = short.project.s3Key;
+    }
 
-    if (!targetUrl) {
+    if (!storageKey) {
+      console.error("[Download] No storage key found:", {
+        hasRenderedUrl: !!short.renderedVideoUrl,
+        hasVideoUrl: !!short.videoUrl,
+        hasS3Key: !!short.project.s3Key,
+        renderedUrl: short.renderedVideoUrl?.slice(0, 100),
+        videoUrl: short.videoUrl?.slice(0, 100),
+        s3Key: short.project.s3Key,
+      });
       return NextResponse.json(
-        { error: "No rendered video available yet — render it first." },
+        { error: "No video available for download" },
         { status: 404 }
       );
     }
 
-    let parsed: URL;
-    try {
-      parsed = new URL(targetUrl);
-    } catch {
-      return NextResponse.json({ error: "Invalid stored URL" }, { status: 500 });
+    console.log("[Download] Using storage key:", storageKey);
+
+    // Generate fresh signed URL (valid for 1 hour)
+    let downloadUrl = "";
+    
+    if (hasSupabaseConfig) {
+      console.log("[Download] Using Supabase for key:", storageKey);
+      const result = await getSupabaseReadUrl(storageKey);
+      downloadUrl = result.signedUrl;
+    } else if (hasStorageCredentials) {
+      console.log("[Download] Using S3 for key:", storageKey);
+      const result = await getPresignedReadUrl(storageKey);
+      downloadUrl = result.signedUrl;
+    } else {
+      // Fallback to existing URL if no storage config
+      console.log("[Download] No storage config, using existing URL");
+      downloadUrl = short.renderedVideoUrl || short.videoUrl || short.project.signedUrl || "";
     }
 
-    if (!ALLOWED_HOST_PATTERN.test(parsed.hostname)) {
+    if (!downloadUrl) {
+      console.error("[Download] Could not generate signed URL:", {
+        hasSupabaseConfig,
+        hasStorageCredentials,
+        storageKey,
+      });
       return NextResponse.json(
-        { error: "Host not allowed" },
-        { status: 403 }
+        { error: "Could not generate download URL" },
+        { status: 500 }
       );
     }
 
-    // Forward any Range header so the browser can download in chunks and
-    // resume interrupted downloads instead of restarting the whole file.
-    // This is the main speed win for large HD MP4s.
-    const range = req.headers.get("range");
-    const upstreamHeaders: Record<string, string> = {};
-    if (range) upstreamHeaders["Range"] = range;
+    console.log("[Download] Generated URL successfully, redirecting...");
 
-    // Server-side fetch (HTTP/1.1 via undici — immune to the QUIC bug)
-    const upstream = await fetch(parsed.toString(), {
-      headers: upstreamHeaders,
-      // Don't cache upstream so fresh bytes always come back
-    });
-
-    if (!upstream.ok && upstream.status !== 206) {
-      return NextResponse.json(
-        { error: `Storage returned ${upstream.status}` },
-        { status: 502 }
-      );
-    }
-
-    const fileName = contentDispositionValue(short.title);
-    const headers = new Headers();
-    headers.set("Content-Type", upstream.headers.get("content-type") || "video/mp4");
-    headers.set("Content-Disposition", fileName);
-    // Advertise that we (and the upstream) support range/resume
-    headers.set("Accept-Ranges", "bytes");
-    const len = upstream.headers.get("content-length");
-    if (len) headers.set("Content-Length", len);
-    const contentRange = upstream.headers.get("content-range");
-    if (contentRange) headers.set("Content-Range", contentRange);
-    // Let edge/CDN cache completed (non-range) responses briefly for repeats
-    if (!range) headers.set("Cache-Control", "public, max-age=300");
-
-    // Stream bytes straight through — nothing buffered in memory.
-    // Status 206 when serving a partial range, 200 otherwise.
-    return new NextResponse(upstream.body, {
-      status: upstream.status === 206 ? 206 : 200,
-      headers,
-    });
+    // Redirect directly to the signed URL with download header
+    // The browser will download directly from Supabase (much faster!)
+    const cleanTitle = (short.title || "short").replace(/[^a-zA-Z0-9_\- ]/g, "_");
+    const filename = `${cleanTitle}.mp4`;
+    
+    // Use 302 temporary redirect (don't cache)
+    const response = NextResponse.redirect(downloadUrl, 302);
+    
+    // Set filename suggestion (works in most browsers)
+    response.headers.set("Content-Disposition", `attachment; filename="${filename}"`);
+    response.headers.set("Cache-Control", "no-cache, no-store, must-revalidate");
+    
+    return response;
   } catch (error) {
     console.error("[Download API Error]:", error);
     return NextResponse.json(
