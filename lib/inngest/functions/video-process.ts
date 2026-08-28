@@ -65,8 +65,8 @@ export const processVideoWorkflow = inngest.createFunction(
   {
     id: "process-uploaded-video",
     retries: 2,
-    triggers: [{ event: "video/process.started" }],
   },
+  [{ event: "video/process.started" }],
   async ({ event, step }) => {
     const data = event.data as ProcessVideoEventData;
     const { projectId, userId, s3Key, originalFileName, clipCount, captionStyle, aspectRatio } = data;
@@ -217,15 +217,6 @@ export const processVideoWorkflow = inngest.createFunction(
           "Let's dive straight into the 3 execution steps to scale your content pipeline. " +
           "Step one is selecting your anchor seed. Step two is configuring camera physics. " +
           "Step three is deploying multi-platform automated scheduling to dominate the algorithm.";
-      }
-
-      // Testing hook: print the full transcript in the Inngest dev dashboard logs
-      console.log("[TEST] Deepgram transcript for project", projectId, ":\n", transcript);
-      if (words.length) {
-        console.log(
-          "[TEST] First 5 word timestamps:",
-          words.slice(0, 5).map((w) => `${w.word} (${w.start}s-${w.end}s)`)
-        );
       }
 
       try {
@@ -427,14 +418,6 @@ export const processVideoWorkflow = inngest.createFunction(
       } catch (e) {
         console.warn("DB update skipped in moment selection step", e);
       }
-
-      // Testing hook: log selected moments in Inngest dashboard
-      console.log(
-        "[TEST] AI Selected Moments for project",
-        projectId,
-        ":\n",
-        JSON.stringify(moments, null, 2)
-      );
 
       return { moments };
     });

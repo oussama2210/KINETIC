@@ -32,7 +32,6 @@ export const renderShortWorkflow = inngest.createFunction(
   {
     id: "render-short-video",
     retries: 2,
-    triggers: [{ event: "short/render.requested" }],
     // Mark FAILED when all retries are exhausted so the UI can offer a retry
     onFailure: async ({ event, error }) => {
       const original = (event.data as { event?: { data?: RenderShortEventData } }).event;
@@ -53,6 +52,7 @@ export const renderShortWorkflow = inngest.createFunction(
       }
     },
   },
+  [{ event: "short/render.requested" }],
   async ({ event, step }) => {
     const { shortId } = event.data as RenderShortEventData;
 
@@ -194,13 +194,6 @@ export const renderShortWorkflow = inngest.createFunction(
     } catch (e) {
       console.warn("[Render] temp cleanup warning:", e);
     }
-
-    console.log(
-      "[TEST] Short render completed for",
-      shortId,
-      ":",
-      uploadResult.url
-    );
 
     return { success: true, shortId, downloadUrl: uploadResult.url };
   }

@@ -26,8 +26,7 @@ export const publishScheduledPostWorkflow = inngest.createFunction(
   {
     id: "publish-scheduled-post",
     retries: 3, // Retry up to 3 times if Zernio fails
-    triggers: [{ event: "social/post.scheduled" }],
-    
+
     // Mark as FAILED if all retries exhausted
     onFailure: async ({ event, error }) => {
       const original = (event.data as { event?: { data?: PublishScheduledPostEventData } }).event;
@@ -48,6 +47,7 @@ export const publishScheduledPostWorkflow = inngest.createFunction(
       }
     },
   },
+  [{ event: "social/post.scheduled" }],
   async ({ event, step }) => {
     const { scheduledPostId } = event.data as PublishScheduledPostEventData;
 
