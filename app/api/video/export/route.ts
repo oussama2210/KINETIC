@@ -3,6 +3,21 @@ import { fixedWindow } from "@arcjet/next";
 import { aj } from "@/lib/arcjet";
 import { prisma } from "@/lib/prisma";
 import { inngest } from "@/lib/inngest/client";
+import { getSupabaseReadUrl, hasSupabaseConfig } from "@/lib/supabase";
+import { getPresignedReadUrl, hasStorageCredentials } from "@/lib/s3";
+
+// Resolve a fresh signed read URL from a storage path — signed URLs expire and
+// invalidate on Supabase project changes, so we never serve a cached one.
+async function freshSignedUrl(storagePath: string | null | undefined): Promise<string> {
+  if (!storagePath) return "";
+  try {
+    if (hasSupabaseConfig) return await getSupabaseReadUrl(storagePath);
+    if (hasStorageCredentials) return await getPresignedReadUrl(storagePath);
+  } catch (e) {
+    console.warn("[Export] Could not regenerate signed URL for path:", storagePath, e);
+  }
+  return "";
+}
 
 // Fire-and-forget endpoint: queues an Inngest render job and returns instantly.
 // The heavy FFmpeg work happens in the background workflow, so there is no
@@ -45,7 +60,8 @@ export async function POST(req: NextRequest) {
         title: true,
         renderStatus: true,
         renderedVideoUrl: true,
-        renderUpdatedAt: true,
+        renderedStoragePath: true,
+        updatedAt: true,
       },
     });
 
@@ -56,14 +72,25 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Already rendered — hand back the download URL immediately
-    if (short.renderStatus === "READY" && short.renderedVideoUrl) {
-      return NextResponse.json({
-        success: true,
-        shortId,
-        renderStatus: "READY",
-        downloadUrl: short.renderedVideoUrl,
-      });
+    // Already rendered — resolve a FRESH signed download URL from the storage
+    // path (never serve the cached one, which expires / invalidates on project changes)
+    if (short.renderStatus === "READY") {
+      let downloadUrl = "";
+      try {
+        downloadUrl = await freshSignedUrl(short.renderedStoragePath || null);
+      } catch {
+        downloadUrl = "";
+      }
+      if (!downloadUrl && short.renderedVideoUrl) downloadUrl = short.renderedVideoUrl;
+
+      if (downloadUrl) {
+        return NextResponse.json({
+          success: true,
+          shortId,
+          renderStatus: "READY",
+          downloadUrl,
+        });
+      }
     }
 
     // Stuck-run detection: QUEUED/RENDERING is only honored while fresh.
@@ -72,8 +99,7 @@ export async function POST(req: NextRequest) {
     const STALE_AFTER_MS = 5 * 60 * 1000;
     const isStale =
       (short.renderStatus === "QUEUED" || short.renderStatus === "RENDERING") &&
-      (!short.renderUpdatedAt ||
-        Date.now() - new Date(short.renderUpdatedAt).getTime() > STALE_AFTER_MS);
+      Date.now() - new Date(short.updatedAt).getTime() > STALE_AFTER_MS;
 
     if (
       !isStale &&
@@ -94,7 +120,7 @@ export async function POST(req: NextRequest) {
 
     await prisma.generatedShort.update({
       where: { id: shortId },
-      data: { renderStatus: "QUEUED", renderError: null, renderUpdatedAt: new Date() },
+      data: { renderStatus: "QUEUED", renderError: null },
     });
 
     console.log(`[Export API] Queued Inngest render for short "${short.title}" (${shortId})`);

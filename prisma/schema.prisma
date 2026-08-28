@@ -100,9 +100,10 @@ model GeneratedShort {
   videoUrl          String?                         // video source playback URL
   status            String   @default("SELECTED")   // SELECTED, READY, COMPLETED
   renderStatus      String   @default("NOT_REQUESTED") // NOT_REQUESTED, QUEUED, RENDERING, READY, FAILED
-  renderUpdatedAt   DateTime?                        // last time renderStatus changed (stale-run detection)
-  renderedVideoUrl  String?                         // signed URL of the FFmpeg-rendered HD 9:16 MP4
+  renderedStoragePath String?                       // storage path of the FFmpeg-rendered HD 9:16 MP4 (resolved to a fresh signed URL on read)
+  renderedVideoUrl  String?                         // cached signed URL (refreshed at read time from renderedStoragePath)
   renderError       String?                         // failure reason when renderStatus = FAILED
+  updatedAt         DateTime @updatedAt
   createdAt         DateTime @default(now())
 
   @@index([projectId])

@@ -45,7 +45,7 @@ export const renderShortWorkflow = inngest.createFunction(
           data: {
             renderStatus: "FAILED",
             renderError: error?.message || "Render failed after retries",
-            renderUpdatedAt: new Date(),
+            updatedAt: new Date(),
           },
         });
       } catch (e) {
@@ -70,7 +70,7 @@ export const renderShortWorkflow = inngest.createFunction(
         data: {
           renderStatus: "RENDERING",
           renderError: null,
-          renderUpdatedAt: new Date(),
+          updatedAt: new Date(),
         },
       });
 
@@ -157,34 +157,30 @@ export const renderShortWorkflow = inngest.createFunction(
         const uploaded = await uploadBufferToSupabase(storagePath, fileBuffer, "video/mp4");
         if (!uploaded.success) throw new Error(uploaded.error || "Supabase upload failed");
 
-        // Signed URL so private buckets stay downloadable for 24h
-        try {
-          const signedDownloadUrl = await getSupabaseReadUrl(uploaded.storagePath);
-          return { url: signedDownloadUrl };
-        } catch {
-          return { url: uploaded.publicUrl };
-        }
+        // Do NOT persist a signed URL — it expires and breaks on project changes.
+        // Store only the storage path; a fresh signed URL is resolved on read.
+        return { path: uploaded.storagePath };
       }
 
       if (hasStorageCredentials) {
         const uploaded = await uploadBufferToS3(storagePath, fileBuffer, "video/mp4");
         if (!uploaded.success) throw new Error("S3 upload failed");
-        const signedDownloadUrl = await getPresignedReadUrl(uploaded.s3Key);
-        return { url: signedDownloadUrl };
+        return { path: uploaded.s3Key };
       }
 
       throw new Error("No storage backend configured to store the rendered video");
     });
 
-    // Step 5: Persist download URL + mark READY
+    // Step 5: Persist storage path + mark READY (signed URL resolved on demand)
     await step.run("finalize-render-status", async () => {
       await prisma.generatedShort.update({
         where: { id: shortId },
         data: {
           renderStatus: "READY",
-          renderedVideoUrl: uploadResult.url,
+          renderedStoragePath: uploadResult.path,
+          renderedVideoUrl: null,
           renderError: null,
-          renderUpdatedAt: new Date(),
+          updatedAt: new Date(),
         },
       });
     });

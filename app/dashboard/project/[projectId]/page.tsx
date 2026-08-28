@@ -95,12 +95,13 @@ export default function ProjectAnalysisPage() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollCountRef = useRef(0);
 
-  const triggerShortDownload = React.useCallback((shortId: string) => {
-    // Streams through our own server (/api/video/download), which sets
-    // Content-Disposition: attachment and bypasses browser issues.
-    // Node fetches from storage over HTTP/1.1 and relays bytes to the browser locally.
+  const triggerShortDownload = React.useCallback((shortId: string, fileName = "short.mp4") => {
+    // Streams through our own server (/api/video/download) which returns the
+    // file as a same-origin attachment — the browser downloads it directly and
+    // never sees or navigates to the underlying Supabase storage URL.
     const link = document.createElement("a");
     link.href = `/api/video/download?shortId=${encodeURIComponent(shortId)}`;
+    link.download = fileName;
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -145,7 +146,8 @@ export default function ProjectAnalysisPage() {
             );
             setPendingRenders([...pendingRendersRef.current]);
             for (const s of finished) {
-              triggerShortDownload(s.id);
+              const name = `${s.title.replace(/[^a-zA-Z0-9_-]/g, "_")}.mp4`;
+              triggerShortDownload(s.id, name);
             }
           }
         }
@@ -203,7 +205,7 @@ export default function ProjectAnalysisPage() {
 
     // Already rendered — download the real HD file directly
     if (short.renderStatus === "READY" && short.renderedVideoUrl) {
-      triggerShortDownload(short.id);
+      triggerShortDownload(short.id, fileName);
       return;
     }
 
@@ -224,7 +226,7 @@ export default function ProjectAnalysisPage() {
 
       if (data?.success && data.downloadUrl) {
         // Render was already done server-side — grab it right away
-        triggerShortDownload(short.id);
+        triggerShortDownload(short.id, fileName);
         return;
       }
 

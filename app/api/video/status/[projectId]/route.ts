@@ -88,8 +88,16 @@ export async function GET(
     // the original snapshot expires (for shorts that haven't been rendered yet)
     if (project.generatedShorts?.length) {
       for (const gs of project.generatedShorts) {
-        // Only refresh the preview URL; rendered shorts already have their own URL
-        if (gs.renderStatus !== "READY" || !gs.renderedVideoUrl) {
+        if (gs.renderStatus === "READY") {
+          // Resolve a FRESH signed download URL from the stored storage path.
+          // The cached renderedVideoUrl expires / invalidates on project changes,
+          // so we always regenerate it here at read time.
+          const freshDownload = await freshSignedUrl(gs.renderedStoragePath || null);
+          if (freshDownload) {
+            gs.renderedVideoUrl = freshDownload;
+          }
+        } else if (gs.renderStatus !== "READY" || !gs.renderedVideoUrl) {
+          // Only refresh the preview URL; rendered shorts already have their own URL
           gs.videoUrl = liveSignedUrl || gs.videoUrl;
         }
       }
