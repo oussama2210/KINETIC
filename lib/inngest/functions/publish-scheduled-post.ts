@@ -1,3 +1,15 @@
+interface InngestHandlerCtx {
+  event: { data: any; [key: string]: any };
+  step: {
+    run: <T>(id: string, fn: () => T | Promise<T>) => Promise<T>;
+    sleep: (id: string, duration: number | string) => Promise<void>;
+  };
+}
+
+interface InngestFailureCtx {
+  event: { data: any; [key: string]: any };
+  error?: Error;
+}
 import { inngest } from "../client";
 import { prisma } from "@/lib/prisma";
 import { publishPost, uploadMediaToZernio, PLATFORM_MAP } from "@/lib/zernio";
@@ -28,7 +40,7 @@ export const publishScheduledPostWorkflow = inngest.createFunction(
     retries: 3, // Retry up to 3 times if Zernio fails
 
     // Mark as FAILED if all retries exhausted
-    onFailure: async ({ event, error }) => {
+    onFailure: async ({ event, error }: InngestFailureCtx) => {
       const original = (event.data as { event?: { data?: PublishScheduledPostEventData } }).event;
       const scheduledPostId = original?.data?.scheduledPostId;
       if (!scheduledPostId) return;
@@ -48,7 +60,7 @@ export const publishScheduledPostWorkflow = inngest.createFunction(
     },
   },
   [{ event: "social/post.scheduled" }],
-  async ({ event, step }) => {
+  async ({ event, step }: InngestHandlerCtx) => {
     const { scheduledPostId } = event.data as PublishScheduledPostEventData;
 
     // Step 1: Load scheduled post from database

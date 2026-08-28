@@ -1,3 +1,10 @@
+interface InngestHandlerCtx {
+  event: { data: any; [key: string]: any };
+  step: {
+    run: <T>(id: string, fn: () => T | Promise<T>) => Promise<T>;
+    sleep: (id: string, duration: number | string) => Promise<void>;
+  };
+}
 import { inngest } from "../client";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
@@ -67,7 +74,7 @@ export const processVideoWorkflow = inngest.createFunction(
     retries: 2,
   },
   [{ event: "video/process.started" }],
-  async ({ event, step }) => {
+  async ({ event, step }: InngestHandlerCtx) => {
     const data = event.data as ProcessVideoEventData;
     const { projectId, userId, s3Key, originalFileName, clipCount, captionStyle, aspectRatio } = data;
 

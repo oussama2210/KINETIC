@@ -1,3 +1,15 @@
+interface InngestHandlerCtx {
+  event: { data: any; [key: string]: any };
+  step: {
+    run: <T>(id: string, fn: () => T | Promise<T>) => Promise<T>;
+    sleep: (id: string, duration: number | string) => Promise<void>;
+  };
+}
+
+interface InngestFailureCtx {
+  event: { data: any; [key: string]: any };
+  error?: Error;
+}
 import { inngest } from "../client";
 import { prisma } from "@/lib/prisma";
 import { renderShortVideo, type SubtitleCue } from "@/lib/ffmpeg";
@@ -33,7 +45,7 @@ export const renderShortWorkflow = inngest.createFunction(
     id: "render-short-video",
     retries: 2,
     // Mark FAILED when all retries are exhausted so the UI can offer a retry
-    onFailure: async ({ event, error }) => {
+    onFailure: async ({ event, error }: InngestFailureCtx) => {
       const original = (event.data as { event?: { data?: RenderShortEventData } }).event;
       const shortId = original?.data?.shortId;
       if (!shortId) return;
@@ -53,7 +65,7 @@ export const renderShortWorkflow = inngest.createFunction(
     },
   },
   [{ event: "short/render.requested" }],
-  async ({ event, step }) => {
+  async ({ event, step }: InngestHandlerCtx) => {
     const { shortId } = event.data as RenderShortEventData;
 
     // Step 1: Load the short + project record (40% of pipeline handled by DB state)
@@ -195,6 +207,6 @@ export const renderShortWorkflow = inngest.createFunction(
       console.warn("[Render] temp cleanup warning:", e);
     }
 
-    return { success: true, shortId, downloadUrl: uploadResult.url };
+    return { success: true, shortId, downloadUrl: uploadResult.path };
   }
 );

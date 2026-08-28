@@ -6,6 +6,22 @@ const nextConfig: NextConfig = {
   // webpack cannot statically trace.
   serverExternalPackages: ["@ffmpeg-installer/ffmpeg", "fluent-ffmpeg"],
 
+  // Keep Node built-ins external in the server bundle so dynamic fs usage in
+  // lib/ffmpeg.ts (fs.statSync/existsSync with runtime-computed paths) is not
+  // traced/bundled, which silences the "Dynamic filesystem access" warning.
+  webpack: (config, { isServer }) => {
+    if (isServer) {
+      const externals = Array.isArray(config.externals)
+        ? [...config.externals]
+        : config.externals
+          ? [config.externals]
+          : [];
+      externals.push("fs", "path", "os", "child_process");
+      config.externals = externals;
+    }
+    return config;
+  },
+
   // Remote patterns for video thumbnails, avatars, and cloud media
   images: {
     remotePatterns: [

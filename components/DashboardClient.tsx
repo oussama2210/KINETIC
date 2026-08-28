@@ -40,6 +40,17 @@ import {
 import { useDashboard, DashboardTab } from "@/app/dashboard/DashboardContext";
 import { VideoUploadZone } from "@/components/VideoUploadZone";
 
+interface RenderItem {
+  id: string;
+  title: string;
+  videoUrl: string;
+  duration: string;
+  format: string;
+  published: boolean;
+  channels: string[];
+  time: string;
+}
+
 interface DbUserData {
   id?: string;
   clerkId?: string;
@@ -50,6 +61,7 @@ interface DbUserData {
   plan?: string;
   computeCredits?: number;
   apiKey?: string;
+  createdAt?: string | Date;
   videos?: Array<{
     id: string;
     title: string;
@@ -191,7 +203,7 @@ export function DashboardClient({ initialDbUser, scheduledPosts: initialSchedule
   const connectedAccounts = initialDbUser?.socialAccounts || [];
   
   // AI-generated shorts from database
-  const [renders, setRenders] = useState(
+  const [renders, setRenders] = useState<RenderItem[]>(
     initialGeneratedShorts.map((short) => ({
       id: short.id,
       title: short.title,
