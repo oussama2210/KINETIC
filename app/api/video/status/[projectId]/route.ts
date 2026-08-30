@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { slidingWindow } from "@arcjet/next";
 import { aj } from "@/lib/arcjet";
 import { prisma, withDbRetry } from "@/lib/prisma";
+import { checkAndSyncUser } from "@/lib/auth-sync";
 import { getSupabaseReadUrl, hasSupabaseConfig } from "@/lib/supabase";
 import { getPresignedReadUrl, hasStorageCredentials } from "@/lib/s3";
 
@@ -38,6 +39,15 @@ export async function GET(
   context: { params: Promise<{ projectId: string }> }
 ) {
   try {
+    // Authenticate user
+    const dbUser = await checkAndSyncUser();
+    if (!dbUser) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 }
+      );
+    }
+
     const decision = await ajStatus.protect(req);
 
     if (decision.isDenied()) {

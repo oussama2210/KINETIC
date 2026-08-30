@@ -3,6 +3,7 @@ import { fixedWindow } from "@arcjet/next";
 import { aj } from "@/lib/arcjet";
 import { prisma } from "@/lib/prisma";
 import { inngest } from "@/lib/inngest/client";
+import { checkAndSyncUser } from "@/lib/auth-sync";
 import { getSupabaseReadUrl, hasSupabaseConfig } from "@/lib/supabase";
 import { getPresignedReadUrl, hasStorageCredentials } from "@/lib/s3";
 
@@ -34,6 +35,15 @@ export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
   try {
+    // Authenticate user
+    const dbUser = await checkAndSyncUser();
+    if (!dbUser) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 }
+      );
+    }
+
     const decision = await ajExport.protect(req);
 
     if (decision.isDenied()) {

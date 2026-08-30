@@ -6,6 +6,10 @@ export default async function DashboardPage() {
   // 1. Fetch authenticated user from Clerk and check/create/sync with database via Prisma
   const dbUser = await checkAndSyncUser();
 
+  if (!dbUser) {
+    redirect("/sign-in");
+  }
+
   // 2. Fetch scheduled posts for the user
   let scheduledPosts: Array<{
     id: string;

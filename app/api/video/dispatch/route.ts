@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { currentUser } from "@clerk/nextjs/server";
 import { inngest } from "@/lib/inngest/client";
 import { prisma } from "@/lib/prisma";
+import { checkAndSyncUser } from "@/lib/auth-sync";
 
 /**
  * Dispatches the Inngest processing workflow for a project.
@@ -11,6 +13,15 @@ import { prisma } from "@/lib/prisma";
  */
 export async function POST(req: NextRequest) {
   try {
+    // Authenticate user
+    const dbUser = await checkAndSyncUser();
+    if (!dbUser) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 }
+      );
+    }
+
     const body = await req.json().catch(() => ({}));
     const projectId = body?.projectId as string | undefined;
 

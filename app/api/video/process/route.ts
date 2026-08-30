@@ -6,15 +6,13 @@ import { getPresignedUploadUrl, hasStorageCredentials } from "@/lib/s3";
 
 export async function POST(req: NextRequest) {
   try {
-    // Clerk's backend can be transiently unreachable (fetch failed / proxy).
-    // Don't 500 the whole upload flow because of it — fall back to the
-    // demo user path below instead.
-    let user: Awaited<ReturnType<typeof currentUser>> = null;
-    try {
-      user = await currentUser();
-    } catch (clerkErr) {
-      console.warn("Clerk currentUser() unavailable, using demo user fallback:", clerkErr);
-      user = null;
+    // Authenticate user
+    const user = await currentUser();
+    if (!user) {
+      return NextResponse.json(
+        { error: "Authentication required" },
+        { status: 401 }
+      );
     }
     const body = await req.json();
 
@@ -30,39 +28,9 @@ export async function POST(req: NextRequest) {
       autoBroll = true,
     } = body;
 
-    // 1. Ensure user exists in Supabase Database or fallback to dev user
-    let dbUser = null;
-    if (user) {
-      dbUser = await prisma.user.upsert({
-        where: { clerkId: user.id },
-        update: {},
-        create: {
-          clerkId: user.id,
-          email: user.emailAddresses[0]?.emailAddress || `${user.id}@aivideo.studio`,
-          firstName: user.firstName || "Director",
-          lastName: user.lastName || "User",
-          imageUrl: user.imageUrl,
-          plan: "STUDIO_PRO",
-          computeCredits: 600,
-        },
-      });
-    } else {
-      // Find or create default demo user for development preview
-      dbUser = await prisma.user.upsert({
-        where: { clerkId: "demo-clerk-id" },
-        update: {},
-        create: {
-          clerkId: "demo-clerk-id",
-          email: "director@aivideo.studio",
-          firstName: "Studio",
-          lastName: "Director",
-          plan: "STUDIO_PRO",
-          computeCredits: 600,
-        },
-      });
-    }
+    const userId = user.id;
 
-    const userId = dbUser.id;
+    dbUser = await prisma.user.upsert({
     const isDirectUrl = Boolean(videoUrl && (videoUrl.startsWith("http://") || videoUrl.startsWith("https://")));
     const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, "_");
     const storagePath = isDirectUrl ? videoUrl : `raw-videos/${userId}/${Date.now()}-${sanitizedFileName}`;
