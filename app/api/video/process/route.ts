@@ -28,9 +28,21 @@ export async function POST(req: NextRequest) {
       autoBroll = true,
     } = body;
 
-    const userId = user.id;
+    const dbUser = await prisma.user.upsert({
+      where: { clerkId: user.id },
+      update: {},
+      create: {
+        clerkId: user.id,
+        email: user.emailAddresses[0]?.emailAddress || `${user.id}@aivideo.studio`,
+        firstName: user.firstName || "Director",
+        lastName: user.lastName || "User",
+        imageUrl: user.imageUrl,
+        plan: "STUDIO_PRO",
+        computeCredits: 600,
+      },
+    });
 
-    dbUser = await prisma.user.upsert({
+    const userId = dbUser.id;
     const isDirectUrl = Boolean(videoUrl && (videoUrl.startsWith("http://") || videoUrl.startsWith("https://")));
     const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, "_");
     const storagePath = isDirectUrl ? videoUrl : `raw-videos/${userId}/${Date.now()}-${sanitizedFileName}`;

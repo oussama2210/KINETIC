@@ -1,14 +1,18 @@
 import { checkAndSyncUser } from "@/lib/auth-sync";
+import { currentUser } from "@clerk/nextjs/server";
 import { DashboardClient } from "@/components/DashboardClient";
 import { prisma } from "@/lib/prisma";
+import { redirect } from "next/navigation";
 
 export default async function DashboardPage() {
-  // 1. Fetch authenticated user from Clerk and check/create/sync with database via Prisma
-  const dbUser = await checkAndSyncUser();
-
-  if (!dbUser) {
+  // 1. Check Clerk auth first (no DB hit)
+  const user = await currentUser();
+  if (!user) {
     redirect("/sign-in");
   }
+
+  // 2. Sync user with database
+  const dbUser = await checkAndSyncUser();
 
   // 2. Fetch scheduled posts for the user
   let scheduledPosts: Array<{
